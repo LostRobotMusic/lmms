@@ -44,10 +44,10 @@ class EXPORT Graph : public QWidget, public ModelView
 public:
 	enum graphStyle
 	{
-		NearestStyle,
-		LinearStyle,
-		LinearNonCyclicStyle,
-		BarStyle,
+		NearestStyle, //!< draw as stairs
+		LinearStyle, //!< connect each 2 samples with a line, with wrapping
+		LinearNonCyclicStyle, //!< LinearStyle without wrapping
+		BarStyle, //!< draw thick bars
 		NumGraphStyles
 	};
 
