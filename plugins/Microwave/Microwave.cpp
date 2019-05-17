@@ -5601,7 +5601,7 @@ void MicrowaveKnob::contextMenuEvent( QContextMenuEvent * )
 	contextMenu.addSeparator();
 	if( this->matrixLocation[0] )
 	{
-		contextMenu.addAction( QPixmap(), tr( "Control this in Matrix" ), this, &MicrowaveKnob::sendToMatrixAsOutput );
+		contextMenu.addAction( QPixmap(), tr( "Control this in Matrix" ), this, SIGNAL( sendToMatrixAsOutput() ) );
 	}
 	contextMenu.addSeparator();
 	contextMenu.exec( QCursor::pos() );
