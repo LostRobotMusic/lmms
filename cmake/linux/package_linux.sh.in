@@ -75,7 +75,7 @@ else
 	# Extract AppImage and replace LINUXDEPLOYQT variable with extracted binary
 	# to support systems without fuse
 	"$LINUXDEPLOYQT" --appimage-extract > /dev/null 2>&1
-	LINUXDEPLOYQT="squashfs-root/AppRun"
+	LINUXDEPLOYQT="squashfs-root/usr/bin/linuxdeployqt"
 	success "Extracted $APPIMAGETOOL"
 fi
 
