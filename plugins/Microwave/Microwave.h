@@ -355,8 +355,8 @@ private:
 		const int margin = 64;
 		
 		// copy to temp array
-		float tmps [ wavelength + margin ]; // temp array in stack
-		float * tmp = &tmps[0];
+		std::unique_ptr<float[]> tmps(new float[wavelength + margin]);
+		float * tmp = &tmps.get()[0];
 
 		memcpy( tmp, _src, sizeof( float ) * wavelength );
 		memcpy( tmp + wavelength, _src, sizeof( float ) * margin );
