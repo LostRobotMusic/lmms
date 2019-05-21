@@ -349,7 +349,7 @@ private:
 
 	// Stolen from WatSyn
 	// memcpy utilizing libsamplerate (src) for sinc interpolation
-	void srccpy( float * _dst, float * _src, int wavelength )
+	inline void srccpy( float * _dst, float * _src, int wavelength )
 	{
 		int err;
 		const int margin = 64;
