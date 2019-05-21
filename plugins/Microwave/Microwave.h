@@ -41,6 +41,19 @@
 #include <QLabel>
 #include <QPlainTextEdit>
 #include <QLineEdit>
+#include <samplerate.h>
+
+
+const int STOREDSUBWAVELEN = 2048;
+const int STOREDMAINWAVELEN = 2048;
+
+const int WAVERATIO = 4;
+
+const int SUBWAVELEN = STOREDSUBWAVELEN * WAVERATIO;
+const int MAINWAVELEN = STOREDMAINWAVELEN * WAVERATIO;
+
+const int STOREDMAINARRAYLEN = STOREDMAINWAVELEN * 256;
+const int MAINARRAYLEN = MAINWAVELEN * 256;
 
 
 class oscillator;
@@ -55,11 +68,17 @@ class MicrowaveKnob: public Knob
 public:
 	void setMatrixLocation( int loc1, int loc2, int loc3 );
 
+	void setWhichMacroKnob( int which );
+
 	MicrowaveView * knobView;
 signals:
 	void sendToMatrixAsOutput();
 	void switchToMatrixKnob();
 	void updateScroll();
+	void setMacroTooltip();
+	void chooseMacroColor();
+	void refreshMacroColor();
+	void setMacroColortoDefault();
 protected:
 	virtual void contextMenuEvent( QContextMenuEvent * _me );
 	virtual void mousePressEvent( QMouseEvent * _me );
@@ -67,6 +86,7 @@ protected:
 private:
 	int matrixLocation[3] = {0};
 	bool ignoreShift = false;
+	int whichMacroKnob = -1;
 };
 
 
@@ -200,6 +220,27 @@ class Microwave : public Instrument
 		name->addItem( tr( "7" ), make_unique<PluginPixmapLoader>( "number_7" ) );\
 		name->addItem( tr( "8" ), make_unique<PluginPixmapLoader>( "number_8" ) );
 
+#define matrixoutmodel( name )\
+		name->clear();\
+		name->addItem( tr( "1" ) );\
+		name->addItem( tr( "2" ) );\
+		name->addItem( tr( "3" ) );\
+		name->addItem( tr( "4" ) );\
+		name->addItem( tr( "5" ) );\
+		name->addItem( tr( "6" ) );\
+		name->addItem( tr( "7" ) );\
+		name->addItem( tr( "8" ) );\
+		name->addItem( tr( "9" ) );\
+		name->addItem( tr( "10" ) );\
+		name->addItem( tr( "11" ) );\
+		name->addItem( tr( "12" ) );\
+		name->addItem( tr( "13" ) );\
+		name->addItem( tr( "14" ) );\
+		name->addItem( tr( "15" ) );\
+		name->addItem( tr( "16" ) );\
+		name->addItem( tr( "17" ) );\
+		name->addItem( tr( "18" ) );
+
 #define filtertypesmodel( name )\
 		name->clear();\
 		name->addItem( tr( "Lowpass" ), make_unique<PluginPixmapLoader>( "filter_lowpass" ) );\
@@ -299,6 +340,33 @@ protected slots:
 	void samplesChanged( int, int );
 
 private:
+
+	// Stolen from WatSyn
+	// memcpy utilizing libsamplerate (src) for sinc interpolation
+	inline void srccpy( float * _dst, float * _src, int wavelength )
+	{
+		int err;
+		const int margin = 64;
+		
+		// copy to temp array
+		float tmps [ wavelength + margin ]; // temp array in stack
+		float * tmp = &tmps[0];
+
+		memcpy( tmp, _src, sizeof( float ) * wavelength );
+		memcpy( tmp + wavelength, _src, sizeof( float ) * margin );
+		SRC_STATE * src_state = src_new( SRC_SINC_FASTEST, 1, &err );
+		SRC_DATA src_data;
+		src_data.data_in = tmp;
+		src_data.input_frames = wavelength + margin;
+		src_data.data_out = _dst;
+		src_data.output_frames = wavelength * WAVERATIO;
+		src_data.src_ratio = static_cast<double>( WAVERATIO );
+		src_data.end_of_input = 0;
+		err = src_process( src_state, &src_data ); 
+		if( err ) { qDebug( "Microwave SRC error: %s", src_strerror( err ) ); }
+		src_delete( src_state );
+	}
+
 	FloatModel  * morph[8];
 	FloatModel  * range[8];
 	FloatModel  * sampLen[8];
@@ -379,9 +447,11 @@ private:
 	FloatModel * subUnisonNum[64];
 	FloatModel * subUnisonDetune[64];
 
-	float waveforms[8][524288] = {{0}};
+	float storedwaveforms[8][STOREDMAINARRAYLEN] = {{0}};
+	float waveforms[8][MAINARRAYLEN] = {{0}};
 	int currentTab = 0;
-	float subs[64][4096] = {{0}};
+	float storedsubs[64][STOREDSUBWAVELEN] = {{0}};
+	float subs[64][SUBWAVELEN] = {{0}};
 	float sampGraphs[1024] = {0};
 	std::vector<float> samples[8][2];
 
@@ -399,10 +469,12 @@ private:
 	FloatModel * sampleStart[8];
 	FloatModel * sampleEnd[8];
 
-	BoolModel  mainFlipped;
-	BoolModel  subFlipped;
+	BoolModel mainFlipped;
+	BoolModel subFlipped;
 
-	FloatModel  * macro[8];
+	FloatModel * macro[18];
+	QString macroTooltips[18] = {};
+	int macroColors[18][3] = {{0}};
 
 	BoolModel removeDC;
 
@@ -489,7 +561,7 @@ private:
 	float sampleStartArr[8] = {0};
 	float sampleEndArr[8] = {1, 1, 1, 1, 1, 1, 1, 1};
 
-	float macroArr[8] = {0};
+	float macroArr[18] = {0};
 	//Above is for passing to mSynth initialization
 
 	int maxMainEnabled = 0;// The highest number of main oscillator sections that must be looped through
@@ -525,6 +597,10 @@ public:
 
 	void sendToMatrixAsOutput( int loc1, int loc2, int loc3 );
 	void switchToMatrixKnob( MicrowaveKnob * theKnob, int loc1, int loc2, int loc3 );
+	void setMacroTooltip( MicrowaveKnob * theKnob, int which );
+	void chooseMacroColor( MicrowaveKnob * theKnob, int which );
+	void refreshMacroColor( MicrowaveKnob * theKnob, int which );
+	void setMacroColortoDefault( MicrowaveKnob * theKnob, int which );
 
 protected slots:
 	void updateScroll();
@@ -722,7 +798,7 @@ private:
 	MicrowaveKnob * sampleStartKnob;
 	MicrowaveKnob * sampleEndKnob;
 
-	MicrowaveKnob * macroKnob[8];
+	MicrowaveKnob * macroKnob[18];
 
 	QScrollBar * effectScrollBar;
 	QScrollBar * matrixScrollBar;
@@ -761,14 +837,16 @@ class mSynth
 	MM_OPERATORS
 public:
 	mSynth( NotePlayHandle * _nph,
-			float * phaseRand, int * modifyMode, float * modify, float * morph, float * range, float * unisonVoices, float * unisonDetune, float * unisonMorph, float * unisonModify, float * morphMaxVal, float * detuneVal, float (&waveforms)[8][524288], float (&subs)[64][4096], bool * subEnabled, float * subVol, float * subRateLimit, float * subPhase, float * subPhaseRand, float * subDetune, bool * subMuted, bool * subKeytrack, float * subSampLen, bool * subNoise, float * sampLen, int * modIn, int * modInNum, float * modInAmnt, float * modInCurve, int * modIn2, int * modInNum2, float * modInAmnt2, float * modInCurve2, int * modOutSec, int * modOutSig, int * modOutSecNum, int * modCombineType, bool * modType, bool * modType2, float * phase, float * vol, float * filtInVol, int * filtType, int * filtSlope, float * filtCutoff, float * filtReso, float * filtGain, float * filtSatu, float * filtWetDry, float * filtBal, float * filtOutVol, bool * filtEnabled, bool * enabled, bool * modEnabled, float * sampGraphs, bool * muted, bool * sampleEnabled, bool * sampleGraphEnabled, bool * sampleMuted, bool * sampleKeytracking, bool * sampleLoop, float * sampleVolume, float * samplePanning, float * sampleDetune, float * samplePhase, float * samplePhaseRand, std::vector<float> (&samples)[8][2], float * filtFeedback, float * filtDetune, bool * filtKeytracking, float * subPanning, float * sampleStart, float * sampleEnd, float * pan, float * subTempo, float * macro, bool * filtMuted, float * subUnisonNum, float * subUnisonDetune, bool * keytracking, float * tempo );
+			float * phaseRand, int * modifyMode, float * modify, float * morph, float * range, float * unisonVoices, float * unisonDetune, float * unisonMorph, float * unisonModify, float * morphMaxVal, float * detuneVal, float (&waveforms)[8][MAINARRAYLEN], float (&subs)[64][SUBWAVELEN], bool * subEnabled, float * subVol, float * subRateLimit, float * subPhase, float * subPhaseRand, float * subDetune, bool * subMuted, bool * subKeytrack, float * subSampLen, bool * subNoise, float * sampLen, int * modIn, int * modInNum, float * modInAmnt, float * modInCurve, int * modIn2, int * modInNum2, float * modInAmnt2, float * modInCurve2, int * modOutSec, int * modOutSig, int * modOutSecNum, int * modCombineType, bool * modType, bool * modType2, float * phase, float * vol, float * filtInVol, int * filtType, int * filtSlope, float * filtCutoff, float * filtReso, float * filtGain, float * filtSatu, float * filtWetDry, float * filtBal, float * filtOutVol, bool * filtEnabled, bool * enabled, bool * modEnabled, float * sampGraphs, bool * muted, bool * sampleEnabled, bool * sampleGraphEnabled, bool * sampleMuted, bool * sampleKeytracking, bool * sampleLoop, float * sampleVolume, float * samplePanning, float * sampleDetune, float * samplePhase, float * samplePhaseRand, std::vector<float> (&samples)[8][2], float * filtFeedback, float * filtDetune, bool * filtKeytracking, float * subPanning, float * sampleStart, float * sampleEnd, float * pan, float * subTempo, float * macro, bool * filtMuted, float * subUnisonNum, float * subUnisonDetune, bool * keytracking, float * tempo );
 	virtual ~mSynth();
 	
-	void nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][524288], float (&subs)[64][4096], float * sampGraphs, std::vector<float> (&samples)[8][2], int maxFiltEnabled, int maxModEnabled, int maxSubEnabled, int maxSampleEnabled, int maxMainEnabled, int sample_rate, Microwave * mwc, bool removeDC, bool isOversamplingSample );
+	void nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][MAINARRAYLEN], float (&subs)[64][SUBWAVELEN], float * sampGraphs, std::vector<float> (&samples)[8][2], int maxFiltEnabled, int maxModEnabled, int maxSubEnabled, int maxSampleEnabled, int maxMainEnabled, int sample_rate, Microwave * mwc, bool removeDC, bool isOversamplingSample, float (&storedsubs)[64][STOREDSUBWAVELEN] );
 
 	inline float detuneWithCents( float pitchValue, float detuneValue );
 
 	inline void refreshValue( int which, int num, Microwave * mwc );
+
+	inline float realfmod( float k, float n );
 
 private:
 	float sample_realindex[8][32] = {{0}};
@@ -935,6 +1013,8 @@ private:
 	float temp3;
 	float temp4;
 	float temp5;
+	float temp6;
+	float temp7;
 
 	float curModVal[2] = {0};
 	float curModVal2[2] = {0};
@@ -953,7 +1033,7 @@ private:
 
 	int filtFeedbackLoc[8] = {0};
 
-	float macro[8];
+	float macro[18];
 
 	float averageSampleValue[2] = {0};// For DC offset removal
 

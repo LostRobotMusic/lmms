@@ -58,8 +58,8 @@
 #include "GuiApplication.h"
 #include "MainWindow.h"
 #include "TextFloat.h"
-
-
+#include <QInputDialog>
+#include <QColorDialog>
 
 
 
@@ -111,7 +111,7 @@ Plugin::Descriptor PLUGIN_EXPORT microwave_plugin_descriptor =
 	STRINGIFY( PLUGIN_NAME ),
 	"Microwave",
 	QT_TRANSLATE_NOOP( "pluginBrowser",
-				"Unique wavetable synthesizer" ),
+				"Versatile modular wavetable synthesizer" ),
 	"DouglasDGI",
 	0x0100,
 	Plugin::Instrument,
@@ -229,7 +229,10 @@ Microwave::Microwave( InstrumentTrack * _instrument_track ) :
 		samplePhaseRand[i] = new FloatModel( 0, 0, 100, 0.0001f, this, tr( "Phase Randomness" ) );
 		sampleStart[i] = new FloatModel( 0, 0, 1, 0.0001f, this, tr( "Start" ) );
 		sampleEnd[i] = new FloatModel( 1, 0, 1, 0.0001f, this, tr( "End" ) );
+	}
 
+	for( int i = 0; i < 18; ++i )
+	{
 		macro[i] = new FloatModel( 0, -100, 100, 0.0001f, this, tr( "Macro" ) );
 	}
 
@@ -242,7 +245,7 @@ Microwave::Microwave( InstrumentTrack * _instrument_track ) :
 		subDetune[i] = new FloatModel( 0.f, -9600.f, 9600.f, 0.0001f, this, tr( "Detune" ) );
 		subMuted[i] = new BoolModel( true, this );
 		subKeytrack[i] = new BoolModel( true, this );
-		subSampLen[i] = new FloatModel( 4096.f, 1.f, 4096.f, 1.f, this, tr( "Sample Length" ) );
+		subSampLen[i] = new FloatModel( STOREDSUBWAVELEN, 1.f, STOREDSUBWAVELEN, 1.f, this, tr( "Sample Length" ) );
 		subNoise[i] = new BoolModel( false, this );
 		subPanning[i] = new FloatModel( 0.f, -100.f, 100.f, 0.0001f, this, tr( "Panning" ) );
 		subTempo[i] = new FloatModel( 0.f, 0.f, 999.f, 1.f, this, tr( "Tempo" ) );
@@ -347,8 +350,6 @@ Microwave::Microwave( InstrumentTrack * _instrument_track ) :
 		connect( filtMuted[i], &BoolModel::dataChanged, this, [this, i]() { valueChanged(133, i); }, Qt::DirectConnection );
 		connect( filtKeytracking[i], &BoolModel::dataChanged, this, [this, i]() { valueChanged(134, i); }, Qt::DirectConnection );
 
-		connect( macro[i], &FloatModel::dataChanged, this, [this, i]() { valueChanged(150, i); }, Qt::DirectConnection );
-
 		for( int j = 1; j <= 19; ++j )
 		{
 			valueChanged(j, i);
@@ -364,8 +365,6 @@ Microwave::Microwave( InstrumentTrack * _instrument_track ) :
 			valueChanged(j, i);
 		}
 
-		valueChanged(150, i);
-
 		connect( sampleEnabled[i], &BoolModel::dataChanged, this, [this, i]() { sampleEnabledChanged(i); }, Qt::DirectConnection );
 
 		connect( enabled[i], &BoolModel::dataChanged, this, [this, i]() { mainEnabledChanged(i); }, Qt::DirectConnection );
@@ -373,6 +372,17 @@ Microwave::Microwave( InstrumentTrack * _instrument_track ) :
 		connect( filtEnabled[i], &BoolModel::dataChanged, this, [this, i]() { filtEnabledChanged(i); }, Qt::DirectConnection );
 
 		connect( sampLen[i], &FloatModel::dataChanged, this, [this, i]() { sampLenChanged(i); }, Qt::DirectConnection );
+	}
+
+	for( int i = 0; i < 18; ++i )
+	{
+		connect( macro[i], &FloatModel::dataChanged, this, [this, i]() { valueChanged(150, i); }, Qt::DirectConnection );
+
+		valueChanged(150, i);
+
+		macroColors[i][0] = 102;
+		macroColors[i][1] = 198;
+		macroColors[i][2] = 199;
 	}
 
 	for( int i = 0; i < 64; ++i )
@@ -464,7 +474,7 @@ void Microwave::saveSettings( QDomDocument & _doc, QDomElement & _this )
 {
 
 	// Save plugin version
-	_this.setAttribute( "version", "Microwave Testing Release 5" );
+	_this.setAttribute( "version", "Microwave Testing Release 5.1" );
 
 	/*
 
@@ -475,6 +485,7 @@ void Microwave::saveSettings( QDomDocument & _doc, QDomElement & _this )
 	- Microwave Testing Release 4.1
 	- Microwave Testing Release 4.2
 	- Microwave Testing Release 5
+	- Microwave Testing Release 5.1
 
 	*/
 
@@ -493,8 +504,8 @@ void Microwave::saveSettings( QDomDocument & _doc, QDomElement & _this )
 			if( updateWavetable[i] )
 			{
 				updateWavetable[i] = false;
-				base64::encode( (const char *)waveforms[i],
-					524288 * sizeof(float), wavetableSaveStrings[i] );
+				base64::encode( (const char *)storedwaveforms[i],
+					STOREDMAINARRAYLEN * sizeof(float), wavetableSaveStrings[i] );
 			}
 			_this.setAttribute( "waveforms"+QString::number(i), wavetableSaveStrings[i] );
 		}
@@ -504,8 +515,8 @@ void Microwave::saveSettings( QDomDocument & _doc, QDomElement & _this )
 	{
 		if( subEnabled[i]->value() )
 		{
-			base64::encode( (const char *)subs[i],
-				4096 * sizeof(float), saveString );
+			base64::encode( (const char *)storedsubs[i],
+				STOREDSUBWAVELEN * sizeof(float), saveString );
 			_this.setAttribute( "subs"+QString::number(i), saveString );
 		}
 	}
@@ -644,9 +655,13 @@ void Microwave::saveSettings( QDomDocument & _doc, QDomElement & _this )
 		}
 	}
 
-	for( int i = 0; i < 8; ++i )
+	for( int i = 0; i < 18; ++i )
 	{
 		macro[i]->saveSettings( _doc, _this, "macro_"+QString::number(i) );
+		_this.setAttribute( "macroTooltips_"+QString::number(i), macroTooltips[i] );
+		_this.setAttribute( "macroRed_"+QString::number(i), macroColors[i][0] );
+		_this.setAttribute( "macroGreen_"+QString::number(i), macroColors[i][1] );
+		_this.setAttribute( "macroBlue_"+QString::number(i), macroColors[i][2] );
 	}
 }
 
@@ -722,7 +737,10 @@ void Microwave::loadSettings( const QDomElement & _this )
 			sampleStart[i]->loadSettings( _this, "sampleStart_"+QString::number(i) );
 			sampleEnd[i]->loadSettings( _this, "sampleEnd_"+QString::number(i) );
 		}
+	}
 
+	for( int i = 0; i < 18; ++i )
+	{
 		macro[i]->loadSettings( _this, "macro_"+QString::number(i) );
 	}
 
@@ -775,9 +793,9 @@ void Microwave::loadSettings( const QDomElement & _this )
 		if( enabled[j]->value() )
 		{
 			base64::decode( _this.attribute( "waveforms"+QString::number(j) ), &dst, &size );
-			for( int i = 0; i < 524288; ++i )
+			for( int i = 0; i < STOREDMAINARRAYLEN; ++i )
 			{
-				waveforms[j][i] = ( (float*) dst )[i];
+				storedwaveforms[j][i] = ( (float*) dst )[i];
 			}
 		}
 	}
@@ -789,7 +807,21 @@ void Microwave::loadSettings( const QDomElement & _this )
 		{
 			for( int i = 0; i < 2048; ++i )
 			{
-				subs[j][i] = ( (float*) dst )[i*2 + (j * 4096)];
+				storedsubs[j][i] = ( (float*) dst )[i*2 + (j * 2048)];
+			}
+		}
+	}
+	else if( microwaveVersion == "Microwave Testing Release 5" )
+	{
+		for( int j = 0; j < 64; ++j )
+		{
+			if( subEnabled[j]->value() )
+			{
+				base64::decode( _this.attribute( "subs"+QString::number(j) ), &dst, &size );
+				for( int i = 0; i < 4096; i+=2 )
+				{
+					storedsubs[j][i/2] = ( (float*) dst )[i];
+				}
 			}
 		}
 	}
@@ -800,9 +832,9 @@ void Microwave::loadSettings( const QDomElement & _this )
 			if( subEnabled[j]->value() )
 			{
 				base64::decode( _this.attribute( "subs"+QString::number(j) ), &dst, &size );
-				for( int i = 0; i < 4096; ++i )
+				for( int i = 0; i < STOREDSUBWAVELEN; ++i )
 				{
-					subs[j][i] = ( (float*) dst )[i];
+					storedsubs[j][i] = ( (float*) dst )[i];
 				}
 			}
 		}
@@ -836,7 +868,31 @@ void Microwave::loadSettings( const QDomElement & _this )
 		}
 	}
 
+	for( int i = 0; i < 18; ++i )
+	{
+		macroTooltips[i] = _this.attribute( "macroTooltips_"+QString::number(i) );
+		macroColors[i][0] = _this.attribute( "macroRed_"+QString::number(i) ).toInt();
+		macroColors[i][1] = _this.attribute( "macroGreen_"+QString::number(i) ).toInt();
+		macroColors[i][2] = _this.attribute( "macroBlue_"+QString::number(i) ).toInt();
+	}
+
 	delete[] dst;
+
+	for( int i = 0; i < 64; ++i )
+	{
+		if( subEnabled[i]->value() )
+		{
+			srccpy( subs[i], const_cast<float*>( storedsubs[i] ), STOREDSUBWAVELEN );
+		}
+	}
+
+	for( int i = 0; i < 8; ++i )
+	{
+		if( enabled[i]->value() )
+		{
+			srccpy( waveforms[i], const_cast<float*>( storedwaveforms[i] ), STOREDMAINARRAYLEN );
+		}
+	}
 
 }
 
@@ -1039,7 +1095,7 @@ void Microwave::morphMaxChanged( int i )
 // Set the range of morphMax and Modify based on new sample length
 void Microwave::sampLenChanged( int i )
 {
-	morphMax[i]->setRange( morphMax[i]->minValue(), 524288.f / sampLen[i]->value() - 2, morphMax[i]->step<float>() );
+	morphMax[i]->setRange( morphMax[i]->minValue(), STOREDMAINARRAYLEN / sampLen[i]->value() - 2, morphMax[i]->step<float>() );
 	modify[i]->setRange( modify[i]->minValue(), sampLen[i]->value() - 1, modify[i]->step<float>() );
 	unisonModify[i]->setRange( unisonModify[i]->minValue(), sampLen[i]->value() - 1, unisonModify[i]->step<float>() );
 }
@@ -1132,7 +1188,9 @@ void Microwave::filtEnabledChanged( int num )
 //When user drawn on graph, send new values to the correct arrays
 void Microwave::samplesChanged( int _begin, int _end )
 {
-	switch( currentTab )
+	// For some reason there was a bug here where shift clicking on the graph at the top left made currenttab 0, which I don't think has any conveivable explanation.
+	// So, I use the scroll value instead.
+	switch( int( scroll.value() - 1 ) )
 	{
 		case 0:
 		{
@@ -1142,8 +1200,15 @@ void Microwave::samplesChanged( int _begin, int _end )
 		{
 			for( int i = _begin; i <= _end; ++i )
 			{
-				subs[subNum.value()-1][i] = graph.samples()[i];
+				storedsubs[subNum.value()-1][i] = graph.samples()[i];
+				for( int j = 0; j < WAVERATIO; ++j )
+				{
+					// Puts low-quality samples into there so one can change the waveform mid-note.  The quality boost will occur at the beginning of the next note.
+					// It cannot do the interpolation here because it causes lag.
+					subs[subNum.value()-1][i*WAVERATIO+j] = graph.samples()[i];
+				}
 			}
+			//srccpy( subs[subNum.value()-1], const_cast<float*>( storedsubs[subNum.value()-1] ), STOREDSUBWAVELEN );
 			break;
 		}
 		case 2:
@@ -1239,6 +1304,14 @@ void Microwave::playNote( NotePlayHandle * _n, sampleFrame * _working_buffer )
 		_n->m_pluginData = new mSynth(
 					_n, phaseRandArr, modifyModeArr, modifyArr, morphArr, rangeArr, unisonVoicesArr, unisonDetuneArr, unisonMorphArr, unisonModifyArr, morphMaxArr, detuneArr, waveforms, subs, subEnabledArr, subVolArr, subRateLimitArr, subPhaseArr, subPhaseRandArr, subDetuneArr, subMutedArr, subKeytrackArr, subSampLenArr, subNoiseArr, sampLenArr, modInArr, modInNumArr, modInAmntArr, modInCurveArr, modIn2Arr, modInNum2Arr, modInAmnt2Arr, modInCurve2Arr, modOutSecArr, modOutSigArr, modOutSecNumArr, modCombineTypeArr, modTypeArr, modType2Arr, phaseArr, volArr, filtInVolArr, filtTypeArr, filtSlopeArr, filtCutoffArr, filtResoArr, filtGainArr, filtSatuArr, filtWetDryArr, filtBalArr, filtOutVolArr, filtEnabledArr, enabledArr, modEnabledArr, sampGraphs, mutedArr, sampleEnabledArr, sampleGraphEnabledArr, sampleMutedArr, sampleKeytrackingArr, sampleLoopArr, sampleVolumeArr, samplePanningArr, sampleDetuneArr, samplePhaseArr, samplePhaseRandArr, samples, filtFeedbackArr, filtDetuneArr, filtKeytrackingArr, subPanningArr, sampleStartArr, sampleEndArr, panArr, subTempoArr, macroArr, filtMutedArr, subUnisonNumArr, subUnisonDetuneArr, keytrackingArr, tempoArr );
 		mwc = dynamic_cast<Microwave *>(_n->instrumentTrack()->instrument());
+
+		for( int i = 0; i < 64; ++i )
+		{
+			if( subEnabled[i]->value() )
+			{
+				srccpy( subs[i], const_cast<float*>( storedsubs[i] ), STOREDSUBWAVELEN );
+			}
+		}
 	}
 
 	const fpp_t frames = _n->framesLeftForCurrentPeriod();
@@ -1257,7 +1330,7 @@ void Microwave::playNote( NotePlayHandle * _n, sampleFrame * _working_buffer )
 				// Process some samples and ignore the output, depending on the oversampling value.  For example, if the oversampling is set to 4x, it will process 4 samples and output 1 of those.
 				for( int i = 0; i < oversample.value() + 1; ++i )
 				{
-					ps->nextStringSample( outputSample, waveforms, subs, sampGraphs, samples, maxFiltEnabled, maxModEnabled, maxSubEnabled, maxSampleEnabled, maxMainEnabled, Engine::mixer()->processingSampleRate() * ( oversample.value() + 1 ), mwc, removeDC.value(), !!i );
+					ps->nextStringSample( outputSample, waveforms, subs, sampGraphs, samples, maxFiltEnabled, maxModEnabled, maxSubEnabled, maxSampleEnabled, maxMainEnabled, Engine::mixer()->processingSampleRate() * ( oversample.value() + 1 ), mwc, removeDC.value(), !!i, storedsubs );
 				}
 				totalOutputSample[0] = outputSample[0];
 				totalOutputSample[1] = outputSample[1];
@@ -1269,7 +1342,7 @@ void Microwave::playNote( NotePlayHandle * _n, sampleFrame * _working_buffer )
 				// Process some number of samples and average them together, depending on the oversampling value.
 				for( int i = 0; i < oversample.value() + 1; ++i )
 				{
-					ps->nextStringSample( outputSample, waveforms, subs, sampGraphs, samples, maxFiltEnabled, maxModEnabled, maxSubEnabled, maxSampleEnabled, maxMainEnabled, Engine::mixer()->processingSampleRate() * ( oversample.value() + 1 ), mwc, removeDC.value(), !!i );
+					ps->nextStringSample( outputSample, waveforms, subs, sampGraphs, samples, maxFiltEnabled, maxModEnabled, maxSubEnabled, maxSampleEnabled, maxMainEnabled, Engine::mixer()->processingSampleRate() * ( oversample.value() + 1 ), mwc, removeDC.value(), !!i, storedsubs );
 					totalOutputSample[0] += outputSample[0];
 					totalOutputSample[1] += outputSample[1];
 				}
@@ -1290,7 +1363,7 @@ void Microwave::playNote( NotePlayHandle * _n, sampleFrame * _working_buffer )
 		//update visualizer
 		if( visualize.value() && scroll.value() == 1 && ps->enabled[mainNum.value()-1] )
 		{
-			visualizerValues[int( ( ps->sample_realindex[mainNum.value()-1][0] / ps->sampLen[mainNum.value()-1] ) * 204.f)] = ps->mainsample[mainNum.value()-1][0] * visvol.value() * 0.01f;
+			visualizerValues[int( ( ps->sample_realindex[mainNum.value()-1][0] / ( ps->sampLen[mainNum.value()-1] * WAVERATIO ) ) * 204.f)] = ps->mainsample[mainNum.value()-1][0] * visvol.value() * 0.01f;
 			if( ps->noteDuration % 1470 == 1 )// Updates around 30 times per second (per note because I'm lazy I guess?)
 			{
 				graph.setSamples( visualizerValues );
@@ -1474,9 +1547,12 @@ MicrowaveView::MicrowaveView( Instrument * _instrument,
 		ToolTip::add( filtKeytrackingToggle[i], tr( "When this is enabled, the delay of the filter's feedback changes to match the frequency of the notes you play." ) );
 
 		filtMutedToggle[i] = new LedCheckBox( "", this, tr( "Muted" ), LedCheckBox::Green );
-		ToolTip::add( filtMutedToggle[i], tr( "This button mutes the filter.  An enabled but muted filter will still use CPU and still work as a matrix input, but will not be sent to the audio output." ) );
+		ToolTip::add( filtMutedToggle[i], tr( "This button mutes the filter.  An enabled but muted filter will still use CPU and still work as a matrix input, but will not be sent to the audio output.  You'll want to use this almost every time you send something to the Matrix." ) );
+	}
 
-		makeknob( macroKnob[i], knobColored, tr( "Macro" ) + " " + QString::number(i+1) + ":", tr( "This knob's value can be used in the Matrix to control many values at the same time, at different amounts." ) );
+	for( int i = 0; i < 18; ++i )
+	{
+		makeknob( macroKnob[i], knobSmallColored, tr( "Macro" ) + " " + QString::number(i+1) + ":", tr( "Macro %1: " ).arg( i + 1 ) + tr( "This knob's value can be used in the Matrix to control many values at the same time, at different amounts.  This is immensely useful for crafting great presets." ) );
 	}
 
 	makeknob( subVolKnob, knobColored, tr( "Volume" ), tr( "This knob, as you probably expected, controls the volume." ) );
@@ -1920,6 +1996,16 @@ MicrowaveView::MicrowaveView( Instrument * _instrument,
 		connect( i2Button[i], &PixmapButton::clicked, this, [this, i]() { i2Clicked(i); } );
 	}
 
+	for( int i = 0; i < 18; ++i )
+	{
+		if( !b->macroTooltips[i].isEmpty() )
+		{
+			ToolTip::add( macroKnob[i], tr( "Macro %1: " ).arg( i + 1 ) + b->macroTooltips[i] );
+		}
+
+		macroKnob[i]->refreshMacroColor();
+	}
+
 	updateScroll();
 	updateBackground();
 
@@ -1938,52 +2024,6 @@ MicrowaveView::~MicrowaveView()
 void MicrowaveView::modelChanged()
 {
 	Microwave * b = castModel<Microwave>();
-
-	for( int i = 0; i < 8; ++i )
-	{
-		filtInVolKnob[i]->setModel( b->filtInVol[i] );
-		filtInVolKnob[i]->setMatrixLocation( 6, 5, i );
-
-		filtTypeBox[i]->setModel( b->filtType[i] );
-
-		filtSlopeBox[i]->setModel( b->filtSlope[i] );
-
-		filtCutoffKnob[i]->setModel( b->filtCutoff[i] );
-		filtCutoffKnob[i]->setMatrixLocation( 6, 1, i );
-
-		filtResoKnob[i]->setModel( b->filtReso[i] );
-		filtResoKnob[i]->setMatrixLocation( 6, 2, i );
-
-		filtGainKnob[i]->setModel( b->filtGain[i] );
-		filtGainKnob[i]->setMatrixLocation( 6, 3, i );
-
-		filtSatuKnob[i]->setModel( b->filtSatu[i] );
-		filtSatuKnob[i]->setMatrixLocation( 6, 9, i );
-
-		filtWetDryKnob[i]->setModel( b->filtWetDry[i] );
-		filtWetDryKnob[i]->setMatrixLocation( 6, 7, i );
-
-		filtBalKnob[i]->setModel( b->filtBal[i] );
-		filtBalKnob[i]->setMatrixLocation( 6, 8, i );
-
-		filtOutVolKnob[i]->setModel( b->filtOutVol[i] );
-		filtOutVolKnob[i]->setMatrixLocation( 6, 6, i );
-
-		filtEnabledToggle[i]->setModel( b->filtEnabled[i] );
-
-		filtFeedbackKnob[i]->setModel( b->filtFeedback[i] );
-		filtFeedbackKnob[i]->setMatrixLocation( 6, 10, i );
-
-		filtDetuneKnob[i]->setModel( b->filtDetune[i] );
-		filtDetuneKnob[i]->setMatrixLocation( 6, 11, i );
-
-		filtKeytrackingToggle[i]->setModel( b->filtKeytracking[i] );
-
-		filtMutedToggle[i]->setModel( b->filtMuted[i] );
-
-		macroKnob[i]->setModel( b->macro[i] );
-		macroKnob[i]->setMatrixLocation( 7, i, 0 );
-	}
 
 	graph->setModel( &b->graph );
 	visvolKnob->setModel( &b->visvol );
@@ -2149,6 +2189,57 @@ void MicrowaveView::updateScroll()
 		modIn2Changed( i+matrixDivide );
 	}
 
+	for( int i = 0; i < 8; ++i )
+	{
+		filtInVolKnob[i]->setModel( b->filtInVol[i] );
+		filtInVolKnob[i]->setMatrixLocation( 6, 5, i );
+
+		filtTypeBox[i]->setModel( b->filtType[i] );
+
+		filtSlopeBox[i]->setModel( b->filtSlope[i] );
+
+		filtCutoffKnob[i]->setModel( b->filtCutoff[i] );
+		filtCutoffKnob[i]->setMatrixLocation( 6, 1, i );
+
+		filtResoKnob[i]->setModel( b->filtReso[i] );
+		filtResoKnob[i]->setMatrixLocation( 6, 2, i );
+
+		filtGainKnob[i]->setModel( b->filtGain[i] );
+		filtGainKnob[i]->setMatrixLocation( 6, 3, i );
+
+		filtSatuKnob[i]->setModel( b->filtSatu[i] );
+		filtSatuKnob[i]->setMatrixLocation( 6, 9, i );
+
+		filtWetDryKnob[i]->setModel( b->filtWetDry[i] );
+		filtWetDryKnob[i]->setMatrixLocation( 6, 7, i );
+
+		filtBalKnob[i]->setModel( b->filtBal[i] );
+		filtBalKnob[i]->setMatrixLocation( 6, 8, i );
+
+		filtOutVolKnob[i]->setModel( b->filtOutVol[i] );
+		filtOutVolKnob[i]->setMatrixLocation( 6, 6, i );
+
+		filtEnabledToggle[i]->setModel( b->filtEnabled[i] );
+
+		filtFeedbackKnob[i]->setModel( b->filtFeedback[i] );
+		filtFeedbackKnob[i]->setMatrixLocation( 6, 10, i );
+
+		filtDetuneKnob[i]->setModel( b->filtDetune[i] );
+		filtDetuneKnob[i]->setMatrixLocation( 6, 11, i );
+
+		filtKeytrackingToggle[i]->setModel( b->filtKeytracking[i] );
+
+		filtMutedToggle[i]->setModel( b->filtMuted[i] );
+	}
+
+	for( int i = 0; i < 18; ++i )
+	{
+		macroKnob[i]->setModel( b->macro[i] );
+		macroKnob[i]->setMatrixLocation( 7, i, 0 );
+		macroKnob[i]->setWhichMacroKnob( i );
+		refreshMacroColor( macroKnob[i], i );
+	}
+
 	visvolKnob->move( 230 - scrollVal, 24 );
 	visvolKnob->setVisible( b->visualize.value() );
 	scrollKnob->move( 0, 220 );
@@ -2163,12 +2254,12 @@ void MicrowaveView::updateScroll()
 	openWavetableButton->move( ( scrollVal < 250 ? 54 : 1500 + 115 ) - scrollVal, scrollVal < 250 ? 220 : 24 );
 	openSampleButton->move( 54 + 500 - scrollVal, 220 );
 
-	sinWaveBtn->move( 179 + 250 - scrollVal, 212 + subIsFlipped );
-	triangleWaveBtn->move( 197 + 250 - scrollVal, 212 + subIsFlipped );
-	sawWaveBtn->move( 215 + 250 - scrollVal, 212 + subIsFlipped );
-	sqrWaveBtn->move( 179 + 250 - scrollVal, 227 + subIsFlipped );
-	whiteNoiseWaveBtn->move( 197 + 250 - scrollVal, 227 + subIsFlipped );
-	smoothBtn->move( 215 + 250 - scrollVal, 227 + subIsFlipped );
+	sinWaveBtn->move( 179 + 250 - scrollVal, 212 );
+	triangleWaveBtn->move( 197 + 250 - scrollVal, 212 );
+	sawWaveBtn->move( 215 + 250 - scrollVal, 212 );
+	sqrWaveBtn->move( 179 + 250 - scrollVal, 227 );
+	whiteNoiseWaveBtn->move( 197 + 250 - scrollVal, 227 );
+	smoothBtn->move( 215 + 250 - scrollVal, 227 );
 	usrWaveBtn->move( 54 + 250 - scrollVal, 220 );
 
 	sinWave2Btn->move( 179 + 500 - scrollVal, 212 );
@@ -2190,14 +2281,24 @@ void MicrowaveView::updateScroll()
 	matrixForegroundLabel->move( 750 - scrollVal, 0 );
 	matrixBoxesLabel->move( 750 + 24 - scrollVal, 35 - ( modScrollVal % 115 ) );
 
-	macroKnob[0]->move( 1250 + 58 - scrollVal, 127 );
-	macroKnob[1]->move( 1250 + 92 - scrollVal, 127 );
-	macroKnob[2]->move( 1250 + 126 - scrollVal, 127 );
-	macroKnob[3]->move( 1250 + 160 - scrollVal, 127 );
-	macroKnob[4]->move( 1250 + 58 - scrollVal, 158 );
-	macroKnob[5]->move( 1250 + 92 - scrollVal, 158 );
-	macroKnob[6]->move( 1250 + 126 - scrollVal, 158 );
-	macroKnob[7]->move( 1250 + 160 - scrollVal, 158 );
+	macroKnob[0]->move( 1250 + 59 - scrollVal, 127 );
+	macroKnob[1]->move( 1250 + 81 - scrollVal, 127 );
+	macroKnob[2]->move( 1250 + 103 - scrollVal, 127 );
+	macroKnob[3]->move( 1250 + 125 - scrollVal, 127 );
+	macroKnob[4]->move( 1250 + 147 - scrollVal, 127 );
+	macroKnob[5]->move( 1250 + 169 - scrollVal, 127 );
+	macroKnob[6]->move( 1250 + 59 - scrollVal, 147 );
+	macroKnob[7]->move( 1250 + 81 - scrollVal, 147 );
+	macroKnob[8]->move( 1250 + 103 - scrollVal, 147 );
+	macroKnob[9]->move( 1250 + 125 - scrollVal, 147 );
+	macroKnob[10]->move( 1250 + 147 - scrollVal, 147 );
+	macroKnob[11]->move( 1250 + 169 - scrollVal, 147 );
+	macroKnob[12]->move( 1250 + 59 - scrollVal, 167 );
+	macroKnob[13]->move( 1250 + 81 - scrollVal, 167 );
+	macroKnob[14]->move( 1250 + 103 - scrollVal, 167 );
+	macroKnob[15]->move( 1250 + 125 - scrollVal, 167 );
+	macroKnob[16]->move( 1250 + 147 - scrollVal, 168 );
+	macroKnob[17]->move( 1250 + 169 - scrollVal, 168 );
 
 	tab1Btn->move( 1, 48 );
 	tab2Btn->move( 1, 63 );
@@ -2312,10 +2413,7 @@ void MicrowaveView::subNumChanged()
 	Microwave * b = castModel<Microwave>();
 
 	b->graph.setLength( b->subSampLen[b->subNum.value()-1]->value() );
-	for( int i = 0; i < 4096; ++i )
-	{
-		b->graph.setSampleAt( i, b->subs[b->subNum.value()-1][i] );
-	}
+	b->graph.setSamples( b->storedsubs[b->subNum.value()-1] );
 
 	int subNumValue = b->subNum.value() - 1;
 
@@ -2467,7 +2565,7 @@ void MicrowaveView::modOutSecChanged( int i )
 			{
 				modOutSigBox[i-matrixDivide]->show();
 				modOutSecNumBox[i-matrixDivide]->hide();
-				mod8model( b->modOutSig[i] )
+				matrixoutmodel( b->modOutSig[i] )
 				break;
 			}
 			default:
@@ -2540,7 +2638,7 @@ void MicrowaveView::modInChanged( int i )
 			case 8:// Macro
 			{
 				modInNumBox[i-matrixDivide]->show();
-				b->modInNum[i]->setRange( 1, 8, 1 );
+				b->modInNum[i]->setRange( 1, 18, 1 );
 				break;
 			}
 		}
@@ -2608,7 +2706,7 @@ void MicrowaveView::modIn2Changed( int i )
 			case 8:// Macro
 			{
 				modInNumBox2[i-matrixDivide]->show();
-				b->modInNum2[i]->setRange( 1, 8, 1 );
+				b->modInNum2[i]->setRange( 1, 18, 1 );
 				break;
 			}
 		}
@@ -2889,6 +2987,8 @@ void MicrowaveView::normalizeClicked()
 	Engine::getSong()->setModified();
 
 	b->updateWavetable[oscilNum] = true;
+
+	b->srccpy( b->waveforms[oscilNum], const_cast<float*>( b->storedwaveforms[oscilNum] ), STOREDMAINARRAYLEN );
 }
 
 void MicrowaveView::desawClicked()
@@ -2912,6 +3012,8 @@ void MicrowaveView::desawClicked()
 	Engine::getSong()->setModified();
 
 	b->updateWavetable[oscilNum] = true;
+
+	b->srccpy( b->waveforms[oscilNum], const_cast<float*>( b->storedwaveforms[oscilNum] ), STOREDMAINARRAYLEN );
 }
 
 
@@ -3071,6 +3173,66 @@ void MicrowaveView::switchToMatrixKnob( MicrowaveKnob * theKnob, int loc1, int l
 }
 
 
+void MicrowaveView::setMacroTooltip( MicrowaveKnob * theKnob, int which )
+{
+	Microwave * b = castModel<Microwave>();
+
+	bool ok;
+	QString new_val;
+
+	new_val = QInputDialog::getText( theKnob, tr( "Set new Tooltip" ), tr( "Please enter a new Tooltip for Macro %1:" ).arg( which + 1 ), QLineEdit::Normal, b->macroTooltips[which], &ok );
+
+	if( ok )
+	{
+		b->macroTooltips[which] = new_val;
+		ToolTip::add( theKnob, tr( "Macro %1: " ).arg( which + 1 ) + new_val );
+	}
+}
+
+
+
+void MicrowaveView::chooseMacroColor( MicrowaveKnob * theKnob, int which )
+{
+	Microwave * b = castModel<Microwave>();
+
+	QColor new_color = QColorDialog::getColor( QColor( b->macroColors[which][0], b->macroColors[which][1], b->macroColors[which][2] ) );
+	if( ! new_color.isValid() )
+	{
+		return;
+	}
+
+	b->macroColors[which][0] = new_color.red();
+	b->macroColors[which][1] = new_color.green();
+	b->macroColors[which][2] = new_color.blue();
+	refreshMacroColor( theKnob, which );
+}
+
+
+void MicrowaveView::setMacroColortoDefault( MicrowaveKnob * theKnob, int which )
+{
+	Microwave * b = castModel<Microwave>();
+
+	b->macroColors[which][0] = 102;
+	b->macroColors[which][1] = 198;
+	b->macroColors[which][2] = 199;
+	refreshMacroColor( theKnob, which );
+}
+
+
+void MicrowaveView::refreshMacroColor( MicrowaveKnob * theKnob, int which )
+{
+	Microwave * b = castModel<Microwave>();
+
+	int red = b->macroColors[which][0];
+	int green = b->macroColors[which][1];
+	int blue = b->macroColors[which][2];
+
+	theKnob->setarcColor( QColor(red*0.4, green*0.4, blue*0.4) );
+	theKnob->setlineColor( QColor(red, green, blue) );
+	theKnob->setInnerColor( QColor(red*0.5, green*0.5, blue*0.5) );
+}
+
+
 
 // Calls MicrowaveView::openWavetableFile when the wavetable opening button is clicked.
 void MicrowaveView::openWavetableFileBtnClicked( )
@@ -3126,6 +3288,7 @@ void MicrowaveView::openWavetableFile( QString fileName )
 	int oscilNum = b->mainNum.value() - 1;
 	int algorithm = b->loadMode.value();
 	int channel = b->loadChnl.value();
+
 	if( !fileName.isEmpty() )
 	{
 		sampleBuffer->dataReadLock();
@@ -3134,17 +3297,17 @@ void MicrowaveView::openWavetableFile( QString fileName )
 		{
 			case 0:// Load sample without changes
 			{
-				for( int i = 0; i < 524288; ++i )
+				for( int i = 0; i < STOREDMAINARRAYLEN; ++i )
 				{
 					if ( i <= lengthOfSample * 2.f )
 					{
-						b->waveforms[oscilNum][i] = sampleBuffer->userWaveSample( (i/lengthOfSample) / 2.f, channel );
+						b->storedwaveforms[oscilNum][i] = sampleBuffer->userWaveSample( (i/lengthOfSample) / 2.f, channel );
 					}
 					else// Replace everything else with silence if sample isn't long enough
 					{
 						b->morphMax[oscilNum]->setValue( i/b->sampLen[oscilNum]->value() );
 						b->morphMaxChanged( oscilNum );
-						for( int j = i; j < 524288; ++j ) { b->waveforms[oscilNum][j] = 0.f; }
+						for( int j = i; j < STOREDMAINARRAYLEN; ++j ) { b->storedwaveforms[oscilNum][j] = 0.f; }
 						break;
 					}
 				}
@@ -3152,17 +3315,17 @@ void MicrowaveView::openWavetableFile( QString fileName )
 			}
 			case 1:// For loading wavetable files
 			{
-				for( int i = 0; i < 524288; ++i )
+				for( int i = 0; i < STOREDMAINARRAYLEN; ++i )
 				{
 					if ( i <= lengthOfSample )
 					{
-						b->waveforms[oscilNum][i] = sampleBuffer->userWaveSample( i/lengthOfSample, channel );
+						b->storedwaveforms[oscilNum][i] = sampleBuffer->userWaveSample( i/lengthOfSample, channel );
 					}
 					else
 					{
 						b->morphMax[oscilNum]->setValue( i/b->sampLen[oscilNum]->value() );
 						b->morphMaxChanged( oscilNum );
-						for( int j = i; j < 524288; ++j ) { b->waveforms[oscilNum][j] = 0.f; }
+						for( int j = i; j < STOREDMAINARRAYLEN; ++j ) { b->storedwaveforms[oscilNum][j] = 0.f; }
 						break;
 					}
 				}
@@ -3264,9 +3427,9 @@ void MicrowaveView::openWavetableFile( QString fileName )
 					}
 				}
 
-				for( int i = 0; i < 524288; ++i )
+				for( int i = 0; i < STOREDMAINARRAYLEN; ++i )
 				{
-					b->waveforms[oscilNum][i] = sampleBuffer->userWaveSample( ((i/2048.f)*period)/lengthOfSample, channel );
+					b->storedwaveforms[oscilNum][i] = sampleBuffer->userWaveSample( ((i/2048.f)*period)/lengthOfSample, channel );
 				}
 
 				b->morphMax[oscilNum]->setValue( 254 );
@@ -3279,6 +3442,8 @@ void MicrowaveView::openWavetableFile( QString fileName )
 		sampleBuffer->dataUnlock();
 
 		b->updateWavetable[oscilNum] = true;
+
+		b->srccpy( b->waveforms[oscilNum], const_cast<float*>( b->storedwaveforms[oscilNum] ), STOREDMAINARRAYLEN );
 	}
 
 	sharedObject::unref( sampleBuffer );
@@ -3388,7 +3553,7 @@ void MicrowaveView::dragEnterEvent( QDragEnterEvent * _dee )
 
 
 // Initializes mSynth (when a new note is played).  Clone all of the arrays storing the knob values so they can be changed by modulation.
-mSynth::mSynth( NotePlayHandle * _nph, float * _phaseRandArr, int * _modifyModeArr, float * _modifyArr, float * _morphArr, float * _rangeArr, float * _unisonVoicesArr, float * _unisonDetuneArr, float * _unisonMorphArr, float * _unisonModifyArr, float * _morphMaxArr, float * _detuneArr, float (&waveforms)[8][524288], float (&subs)[64][4096], bool * _subEnabledArr, float * _subVolArr, float * _subRateLimitArr, float * _subPhaseArr, float * _subPhaseRandArr, float * _subDetuneArr, bool * _subMutedArr, bool * _subKeytrackArr, float * _subSampLenArr, bool * _subNoiseArr, float * _sampLenArr, int * _modInArr, int * _modInNumArr, float * _modInAmntArr, float * _modInCurveArr, int * _modIn2Arr, int * _modInNum2Arr, float * _modInAmnt2Arr, float * _modInCurve2Arr, int * _modOutSecArr, int * _modOutSigArr, int * _modOutSecNumArr, int * modCombineTypeArr, bool * modTypeArr, bool * modType2Arr, float * _phaseArr, float * _volArr, float * _filtInVolArr, int * _filtTypeArr, int * _filtSlopeArr, float * _filtCutoffArr, float * _filtResoArr, float * _filtGainArr, float * _filtSatuArr, float * _filtWetDryArr, float * _filtBalArr, float * _filtOutVolArr, bool * _filtEnabledArr, bool * _enabledArr, bool * _modEnabledArr, float * sampGraphs, bool * _mutedArr, bool * _sampleEnabledArr, bool * _sampleGraphEnabledArr, bool * _sampleMutedArr, bool * _sampleKeytrackingArr, bool * _sampleLoopArr, float * _sampleVolumeArr, float * _samplePanningArr, float * _sampleDetuneArr, float * _samplePhaseArr, float * _samplePhaseRandArr, std::vector<float> (&samples)[8][2], float * _filtFeedbackArr, float * _filtDetuneArr, bool * _filtKeytrackingArr, float * _subPanningArr, float * _sampleStartArr, float * _sampleEndArr, float * _panArr, float * _subTempoArr, float * _macroArr, bool * _filtMutedArr, float * _subUnisonNumArr, float * _subUnisonDetuneArr, bool * _keytrackingArr, float * _tempoArr ) :
+mSynth::mSynth( NotePlayHandle * _nph, float * _phaseRandArr, int * _modifyModeArr, float * _modifyArr, float * _morphArr, float * _rangeArr, float * _unisonVoicesArr, float * _unisonDetuneArr, float * _unisonMorphArr, float * _unisonModifyArr, float * _morphMaxArr, float * _detuneArr, float (&waveforms)[8][MAINARRAYLEN], float (&subs)[64][SUBWAVELEN], bool * _subEnabledArr, float * _subVolArr, float * _subRateLimitArr, float * _subPhaseArr, float * _subPhaseRandArr, float * _subDetuneArr, bool * _subMutedArr, bool * _subKeytrackArr, float * _subSampLenArr, bool * _subNoiseArr, float * _sampLenArr, int * _modInArr, int * _modInNumArr, float * _modInAmntArr, float * _modInCurveArr, int * _modIn2Arr, int * _modInNum2Arr, float * _modInAmnt2Arr, float * _modInCurve2Arr, int * _modOutSecArr, int * _modOutSigArr, int * _modOutSecNumArr, int * modCombineTypeArr, bool * modTypeArr, bool * modType2Arr, float * _phaseArr, float * _volArr, float * _filtInVolArr, int * _filtTypeArr, int * _filtSlopeArr, float * _filtCutoffArr, float * _filtResoArr, float * _filtGainArr, float * _filtSatuArr, float * _filtWetDryArr, float * _filtBalArr, float * _filtOutVolArr, bool * _filtEnabledArr, bool * _enabledArr, bool * _modEnabledArr, float * sampGraphs, bool * _mutedArr, bool * _sampleEnabledArr, bool * _sampleGraphEnabledArr, bool * _sampleMutedArr, bool * _sampleKeytrackingArr, bool * _sampleLoopArr, float * _sampleVolumeArr, float * _samplePanningArr, float * _sampleDetuneArr, float * _samplePhaseArr, float * _samplePhaseRandArr, std::vector<float> (&samples)[8][2], float * _filtFeedbackArr, float * _filtDetuneArr, bool * _filtKeytrackingArr, float * _subPanningArr, float * _sampleStartArr, float * _sampleEndArr, float * _panArr, float * _subTempoArr, float * _macroArr, bool * _filtMutedArr, float * _subUnisonNumArr, float * _subUnisonDetuneArr, bool * _keytrackingArr, float * _tempoArr ) :
 	nph( _nph )
 {
 	memcpy( modifyMode, _modifyModeArr, sizeof(int) * 8 );
@@ -3466,14 +3631,14 @@ mSynth::mSynth( NotePlayHandle * _nph, float * _phaseRandArr, int * _modifyModeA
 	memcpy( subUnisonNum, _subUnisonNumArr, sizeof(float) * 64 );
 	memcpy( subUnisonDetune, _subUnisonDetuneArr, sizeof(float) * 64 );
 	memcpy( sampLen, _sampLenArr, sizeof(float) * 8 );
-	memcpy( macro, _macroArr, sizeof(float) * 8 );
+	memcpy( macro, _macroArr, sizeof(float) * 18 );
 
 	for( int i = 0; i < 8; ++i )
 	{
 		for( int j = 0; j < 32; ++j )
 		{
 			// Randomize the phases of all of the waveforms
-			sample_realindex[i][j] = int( ( ( fastRandf( sampLen[i] ) - ( sampLen[i] * 0.5f ) ) * ( phaseRand[i] * 0.01f ) ) + ( sampLen[i] * 0.5f ) ) % int( sampLen[i] );
+			sample_realindex[i][j] = int( ( ( fastRandf( sampLen[i] * WAVERATIO ) ) * ( phaseRand[i] * 0.01f ) ) ) % int( sampLen[i] * WAVERATIO );
 		}
 	}
 
@@ -3481,7 +3646,7 @@ mSynth::mSynth( NotePlayHandle * _nph, float * _phaseRandArr, int * _modifyModeA
 	{
 		for( int l = 0; l < 32; ++l )
 		{
-			sample_subindex[i][l] = int( ( ( fastRandf( subSampLen[i] ) - ( subSampLen[i] * 0.5f ) ) * ( subPhaseRand[i] * 0.01f ) ) + ( subSampLen[i] * 0.5f ) ) % int( subSampLen[i] );
+			sample_subindex[i][l] = int( ( ( fastRandf( subSampLen[i] * WAVERATIO ) - ( subSampLen[i] * WAVERATIO * 0.5f ) ) * ( subPhaseRand[i] * 0.01f ) ) ) % int( subSampLen[i] * WAVERATIO );
 			subNoiseDirection[i][l] = 1;
 		}
 	}
@@ -3520,7 +3685,7 @@ mSynth::~mSynth()
 
 // The heart of Microwave.  As you probably learned in anatomy class, hearts actually aren't too pretty.  This is no exception.
 // This is the part that puts everything together and calculates an audio output.
-void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][524288], float (&subs)[64][4096], float * sampGraphs, std::vector<float> (&samples)[8][2], int maxFiltEnabled, int maxModEnabled, int maxSubEnabled, int maxSampleEnabled, int maxMainEnabled, int sample_rate, Microwave * mwc, bool removeDC, bool isOversamplingSample )
+void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][MAINARRAYLEN], float (&subs)[64][SUBWAVELEN], float * sampGraphs, std::vector<float> (&samples)[8][2], int maxFiltEnabled, int maxModEnabled, int maxSubEnabled, int maxSampleEnabled, int maxMainEnabled, int sample_rate, Microwave * mwc, bool removeDC, bool isOversamplingSample, float (&storedsubs)[64][STOREDSUBWAVELEN] )
 {
 
 	++noteDuration;
@@ -3866,7 +4031,7 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 						}
 						case 5:// Send input to Phase
 						{
-							phase[modOutSecNum[l]-1] = fmod( phase[modOutSecNum[l]-1] + comboModValMono, 100 );
+							phase[modOutSecNum[l]-1] = phase[modOutSecNum[l]-1] + comboModValMono * 8.f;
 							modValType.push_back( 8 );
 							modValNum.push_back( modOutSecNum[l]-1 );
 							break;
@@ -3936,7 +4101,7 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 						}
 						case 2:// Send input to Phase
 						{
-							subPhase[modOutSecNum[l]-1] = fmod( subPhase[modOutSecNum[l]-1] + comboModValMono, 100 );
+							subPhase[modOutSecNum[l]-1] = subPhase[modOutSecNum[l]-1] + comboModValMono * 8.f;
 							modValType.push_back( 37 );
 							modValNum.push_back( modOutSecNum[l]-1 );
 							break;
@@ -3957,7 +4122,7 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 						}
 						case 5:// Send input to Sample Length
 						{
-							subSampLen[modOutSecNum[l]-1] = qMax( 1, int( subSampLen[modOutSecNum[l]-1] + comboModValMono * 4096.f ) );
+							subSampLen[modOutSecNum[l]-1] = qMax( 1, int( subSampLen[modOutSecNum[l]-1] + comboModValMono * STOREDSUBWAVELEN ) );
 							modValType.push_back( 39 );
 							modValNum.push_back( modOutSecNum[l]-1 );
 							break;
@@ -4006,7 +4171,7 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 						}
 						case 2:// Send input to Phase
 						{
-							samplePhase[modOutSecNum[l]-1] = fmod( samplePhase[modOutSecNum[l]-1] + comboModValMono, 100 );
+							samplePhase[modOutSecNum[l]-1] = samplePhase[modOutSecNum[l]-1] + comboModValMono * 8.f;
 							modValType.push_back( 68 );
 							modValNum.push_back( modOutSecNum[l]-1 );
 							break;
@@ -4256,14 +4421,14 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 			{
 				temp1 = round( sample_rate / detuneWithCents( 440.f, filtDetune[l] ) );
 			}
-			if( filtDelayBuf[l][0].size() != temp1 )
+			if( filtDelayBuf[l][0].size() < temp1 )
 			{
 				filtDelayBuf[l][0].resize( temp1 );
 				filtDelayBuf[l][1].resize( temp1 );
 			}
 
 			++filtFeedbackLoc[l];
-			if( filtFeedbackLoc[l] > filtDelayBuf[l][0].size() - 1 )
+			if( filtFeedbackLoc[l] > temp1 - 1 )
 			{
 				filtFeedbackLoc[l] = 0;
 			}
@@ -4570,9 +4735,10 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 	{
 		if( enabled[i] )
 		{
+			temp6 = sampLen[i] * WAVERATIO;
 			for( int l = 0; l < unisonVoices[i]; ++l )
 			{
-				sample_morerealindex[i][l] = fmod( ( sample_realindex[i][l] + ( phase[i] * sampLen[i] * 0.01f ) ), sampLen[i] );// Calculates phase
+				sample_morerealindex[i][l] = realfmod( ( sample_realindex[i][l] + ( phase[i] * temp6 * 0.01f ) ), temp6 );// Calculates phase
 
 				unisonVoicesMinusOne = unisonVoices[i] - 1;// unisonVoices[i] - 1 is needed many times, which is why unisonVoicesMinusOne exists
 
@@ -4587,7 +4753,7 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 					noteFreq = unisonVoicesMinusOne ? detuneWithCents( keytracking[i] ? nph->frequency() : 440.f, unisonDetuneAmounts[i][l]*unisonDetune[i]+detuneVal[i] ) : detuneWithCents( keytracking[i] ? nph->frequency() : 440.f, detuneVal[i] );// Calculates frequency depending on detune and unison detune
 				}
 
-				sample_step[i][l] = sampLen[i] * ( noteFreq / sample_rate );
+				sample_step[i][l] = temp6 * ( noteFreq / sample_rate );
 
 				if( unisonVoicesMinusOne )// Figures out Morph and Modify values for individual unison voices
 				{
@@ -4600,9 +4766,11 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 					if( unisonModify[i] )
 					{
 						temp1 = ((unisonVoicesMinusOne-l)/unisonVoicesMinusOne)*unisonModify[i];
-						modify[i] = qBound( 0.f, temp1 - ( unisonModify[i] * 0.5f ) + modify[i], sampLen[i]-1.f);// SampleLength - 1 = ModifyMax
+						modify[i] = qBound( 0.f, temp1 - ( unisonModify[i] * 0.5f ) + modify[i], temp6-1.f);// SampleLength - 1 = ModifyMax
 					}
 				}
+
+				temp7 = modify[i] * WAVERATIO;
 
 				switch( modifyMode[i] )// Horrifying formulas for the various Modify Modes
 				{
@@ -4612,136 +4780,136 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 					}
 					case 1:// Pulse Width
 					{
-						sample_morerealindex[i][l] /= ( -modify[i] + sampLen[i] ) / sampLen[i];
+						sample_morerealindex[i][l] /= ( -temp7 + temp6 ) / temp6;
 
-						sample_morerealindex[i][l] = qBound( 0.f, sample_morerealindex[i][l], sampLen[i] - 1);// Keeps sample index within bounds
+						sample_morerealindex[i][l] = qBound( 0.f, sample_morerealindex[i][l], temp6 - 1);// Keeps sample index within bounds
 						break;
 					}
 					case 2:// Weird 1
 					{
 						//The cool result of me messing up.
-						sample_morerealindex[i][l] = ( ( ( sin( ( ( sample_morerealindex[i][l] / sampLen[i] ) * ( modify[i] / 50.f ) ) / 2 ) ) * sampLen[i] ) * ( modify[i] / sampLen[i] ) + ( sample_morerealindex[i][l] + ( ( -modify[i] + sampLen[i] ) / sampLen[i] ) ) ) / 2.f;
+						sample_morerealindex[i][l] = ( ( ( sin( ( ( sample_morerealindex[i][l] / temp6 ) * ( temp7 / 50.f ) ) / 2 ) ) * temp6 ) * ( temp7 / temp6 ) + ( sample_morerealindex[i][l] + ( ( -temp7 + temp6 ) / temp6 ) ) ) / 2.f;
 						break;
 					}
 					case 3:// Weird 2
 					{
 						//Also the cool result of me messing up.
-						if( sample_morerealindex[i][l] > sampLen[i] / 2.f )
+						if( sample_morerealindex[i][l] > temp6 / 2.f )
 						{
-							sample_morerealindex[i][l] = pow( sample_morerealindex[i][l] / sampLen[i], modify[i] * 10 / sampLen[i] + 1 ) * sampLen[i];
+							sample_morerealindex[i][l] = pow( sample_morerealindex[i][l] / temp6, temp7 * 10 / temp6 + 1 ) * temp6;
 						}
 						else
 						{
-							sample_morerealindex[i][l] = -sample_morerealindex[i][l] + sampLen[i];
-							sample_morerealindex[i][l] = pow( sample_morerealindex[i][l] / sampLen[i], modify[i] * 10 / sampLen[i] + 1 ) * sampLen[i];
-							sample_morerealindex[i][l] = sample_morerealindex[i][l] - sampLen[i] / 2.f;
+							sample_morerealindex[i][l] = -sample_morerealindex[i][l] + temp6;
+							sample_morerealindex[i][l] = pow( sample_morerealindex[i][l] / temp6, temp7 * 10 / temp6 + 1 ) * temp6;
+							sample_morerealindex[i][l] = sample_morerealindex[i][l] - temp6 / 2.f;
 						}
 						break;
 					}
 					case 4:// Asym To Right
 					{
-						sample_morerealindex[i][l] = pow( sample_morerealindex[i][l] / sampLen[i], modify[i] * 10 / sampLen[i] + 1 ) * sampLen[i];
+						sample_morerealindex[i][l] = pow( sample_morerealindex[i][l] / temp6, temp7 * 10 / temp6 + 1 ) * temp6;
 						break;
 					}
 					case 5:// Asym To Left
 					{
-						sample_morerealindex[i][l] = -sample_morerealindex[i][l] + sampLen[i];
-						sample_morerealindex[i][l] = pow( sample_morerealindex[i][l] / sampLen[i], modify[i] * 10 / sampLen[i] + 1 ) * sampLen[i];
-						sample_morerealindex[i][l] = -sample_morerealindex[i][l] + sampLen[i];
+						sample_morerealindex[i][l] = -sample_morerealindex[i][l] + temp6;
+						sample_morerealindex[i][l] = pow( sample_morerealindex[i][l] / temp6, temp7 * 10 / temp6 + 1 ) * temp6;
+						sample_morerealindex[i][l] = -sample_morerealindex[i][l] + temp6;
 						break;
 					}
 					case 6:// Bidirectional Asym
 					{
-						temp1 = modify[i] / sampLen[i];
+						temp1 = temp7 / temp6;
 						if( temp1 < 0.5 )
 						{
 							temp1 = ( -temp1 + 1 ) / 2.f - 0.25f;
-							sample_morerealindex[i][l] = -sample_morerealindex[i][l] + sampLen[i];
-							sample_morerealindex[i][l] = pow( sample_morerealindex[i][l] / sampLen[i], temp1 * 10 + 1 ) * sampLen[i];
-							sample_morerealindex[i][l] = -sample_morerealindex[i][l] + sampLen[i];
+							sample_morerealindex[i][l] = -sample_morerealindex[i][l] + temp6;
+							sample_morerealindex[i][l] = pow( sample_morerealindex[i][l] / temp6, temp1 * 10 + 1 ) * temp6;
+							sample_morerealindex[i][l] = -sample_morerealindex[i][l] + temp6;
 						}
 						else
 						{
 							temp1 = temp1 / 2.f - 0.25f;
-							sample_morerealindex[i][l] = pow( sample_morerealindex[i][l] / sampLen[i], temp1 * 10 + 1 ) * sampLen[i];
+							sample_morerealindex[i][l] = pow( sample_morerealindex[i][l] / temp6, temp1 * 10 + 1 ) * temp6;
 						}
 						break;
 					}
 					case 7:// Stretch From Center
 					{
-						temp1 = sampLen[i] / 2.f;
+						temp1 = temp6 / 2.f;
 						sample_morerealindex[i][l] -= temp1;
 						sample_morerealindex[i][l] /= temp1;
-						sample_morerealindex[i][l] = ( sample_morerealindex[i][l] >= 0 ) ? pow( sample_morerealindex[i][l], 1 / ( ( modify[i] * 4 ) / sampLen[i] + 1 ) ) : -pow( -sample_morerealindex[i][l], 1 / ( ( modify[i] * 4 ) / sampLen[i] + 1 ) );
+						sample_morerealindex[i][l] = ( sample_morerealindex[i][l] >= 0 ) ? pow( sample_morerealindex[i][l], 1 / ( ( temp7 * 4 ) / temp6 + 1 ) ) : -pow( -sample_morerealindex[i][l], 1 / ( ( temp7 * 4 ) / temp6 + 1 ) );
 						sample_morerealindex[i][l] *= temp1;
 						sample_morerealindex[i][l] += temp1;
 						break;
 					}
 					case 8:// Squish To Center
 					{
-						temp1 = sampLen[i] / 2.f;
+						temp1 = temp6 / 2.f;
 						sample_morerealindex[i][l] -= temp1;
 						sample_morerealindex[i][l] /= temp1;
-						sample_morerealindex[i][l] = ( sample_morerealindex[i][l] >= 0 ) ? pow( sample_morerealindex[i][l], 1 / ( -modify[i] / sampLen[i] + 1  ) ) : -pow( -sample_morerealindex[i][l], 1 / ( -modify[i] / sampLen[i] + 1 ) );
+						sample_morerealindex[i][l] = ( sample_morerealindex[i][l] >= 0 ) ? pow( sample_morerealindex[i][l], 1 / ( -temp7 / temp6 + 1  ) ) : -pow( -sample_morerealindex[i][l], 1 / ( -temp7 / temp6 + 1 ) );
 						sample_morerealindex[i][l] *= temp1;
 						sample_morerealindex[i][l] += temp1;
 						break;
 					}
 					case 9:// Stretch And Squish
 					{
-						temp1 = sampLen[i] / 2.f;
+						temp1 = temp6 / 2.f;
 						sample_morerealindex[i][l] -= temp1;
 						sample_morerealindex[i][l] /= temp1;
-						sample_morerealindex[i][l] = ( sample_morerealindex[i][l] >= 0 ) ? pow( sample_morerealindex[i][l], 1 / ( modify[i] * 4 / sampLen[i] ) ) : -pow( -sample_morerealindex[i][l], 1 / ( modify[i] * 4 / sampLen[i] ) );
+						sample_morerealindex[i][l] = ( sample_morerealindex[i][l] >= 0 ) ? pow( sample_morerealindex[i][l], 1 / ( temp7 * 4 / temp6 ) ) : -pow( -sample_morerealindex[i][l], 1 / ( temp7 * 4 / temp6 ) );
 						sample_morerealindex[i][l] *= temp1;
 						sample_morerealindex[i][l] += temp1;
 						break;
 					}
 					case 10:// Cut Off Right
 					{
-						sample_morerealindex[i][l] *= ( -modify[i] + sampLen[i] ) / sampLen[i];
+						sample_morerealindex[i][l] *= ( -temp7 + temp6 ) / temp6;
 						break;
 					}
 					case 11:// Cut Off Left
 					{
-						sample_morerealindex[i][l] = -sample_morerealindex[i][l] + sampLen[i];
-						sample_morerealindex[i][l] *= ( -modify[i] + sampLen[i] ) / sampLen[i];
-						sample_morerealindex[i][l] = -sample_morerealindex[i][l] + sampLen[i];
+						sample_morerealindex[i][l] = -sample_morerealindex[i][l] + temp6;
+						sample_morerealindex[i][l] *= ( -temp7 + temp6 ) / temp6;
+						sample_morerealindex[i][l] = -sample_morerealindex[i][l] + temp6;
 						break;
 					}
 					case 19:// Sync
 					{
-						sample_morerealindex[i][l] *= ( ( modify[i] * 16.f ) / sampLen[i] ) + 1;
-						sample_morerealindex[i][l] = fmod( sample_morerealindex[i][l], sampLen[i] - 1 );
+						sample_morerealindex[i][l] *= ( ( temp7 * 16.f ) / temp6 ) + 1;
+						sample_morerealindex[i][l] = fmod( sample_morerealindex[i][l], temp6 - 1 );
 						break;
 					}
 					case 20:// Sync Half Interpolate
 					{
-						sample_morerealindex[i][l] *= ( ( modify[i] * 16.f ) / sampLen[i] ) + 1;
-						sample_morerealindex[i][l] = fmod( sample_morerealindex[i][l], sampLen[i] - 1 );
+						sample_morerealindex[i][l] *= ( ( temp7 * 16.f ) / temp6 ) + 1;
+						sample_morerealindex[i][l] = fmod( sample_morerealindex[i][l], temp6 - 1 );
 						break;
 					}
 					case 21:// Sync Interpolate
 					{
-						sample_morerealindex[i][l] *= ( ( modify[i] * 16.f ) / sampLen[i] ) + 1;
-						sample_morerealindex[i][l] = fmod( sample_morerealindex[i][l], sampLen[i] - 1 );
+						sample_morerealindex[i][l] *= ( ( temp7 * 16.f ) / temp6 ) + 1;
+						sample_morerealindex[i][l] = fmod( sample_morerealindex[i][l], temp6 - 1 );
 						break;
 					}
 					case 22:// Mirror
 					{
-						sample_morerealindex[i][l] = sample_morerealindex[i][l] < sampLen[i] / 2 ? sample_morerealindex[i][l] * 2 : ( -sample_morerealindex[i][l] + sampLen[i] ) * 2;
-						temp1 = modify[i] / sampLen[i];
+						sample_morerealindex[i][l] = sample_morerealindex[i][l] < temp6 / 2 ? sample_morerealindex[i][l] * 2 : ( -sample_morerealindex[i][l] + temp6 ) * 2;
+						temp1 = temp7 / temp6;
 						if( temp1 < 0.5 )
 						{
 							temp1 = ( -temp1 + 1 ) / 2.f - 0.25f;
-							sample_morerealindex[i][l] = -sample_morerealindex[i][l] + sampLen[i];
-							sample_morerealindex[i][l] = pow( sample_morerealindex[i][l] / sampLen[i], temp1 * 10 + 1 ) * sampLen[i];
-							sample_morerealindex[i][l] = -sample_morerealindex[i][l] + sampLen[i];
+							sample_morerealindex[i][l] = -sample_morerealindex[i][l] + temp6;
+							sample_morerealindex[i][l] = pow( sample_morerealindex[i][l] / temp6, temp1 * 10 + 1 ) * temp6;
+							sample_morerealindex[i][l] = -sample_morerealindex[i][l] + temp6;
 						}
 						else
 						{
 							temp1 = temp1 / 2.f - 0.25f;
-							sample_morerealindex[i][l] = pow( sample_morerealindex[i][l] / sampLen[i], temp1 * 10 + 1 ) * sampLen[i];
+							sample_morerealindex[i][l] = pow( sample_morerealindex[i][l] / temp6, temp1 * 10 + 1 ) * temp6;
 						}
 						break;
 					}
@@ -4752,9 +4920,9 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 				mainsample[i][l] = 0;
 
 				loopStart = qMax( 0.f, morph[i] - range[i] ) + 1;
-				loopEnd = qMin( morph[i] + range[i], 524288.f / sampLen[i] ) + 1;
+				loopEnd = qMin( morph[i] + range[i], MAINARRAYLEN / temp6 ) + 1;
 				currentRangeValInvert = 1.f / range[i];
-				currentSampLen = sampLen[i];
+				currentSampLen = temp6;
 				currentIndex = sample_morerealindex[i][l];
 				if( modifyMode[i] != 12 && modifyMode[i] != 13 )// If NOT Squarify or Pulsify Modify Mode
 				{
@@ -4770,7 +4938,7 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 					// Self-made formula, may be buggy.  Crossfade one half of waveform with the inverse of the other.
 
 					// Taking these calculations out of the following loop will help with performance with high Range values.
-					temp2 = modify[i] / currentSampLen;
+					temp2 = temp7 / currentSampLen;
 					temp3 = temp2;
 					++temp2;
 					temp4 = int( currentIndex + ( currentSampLen * 0.5 ) ) % currentSampLen;
@@ -4789,7 +4957,7 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 					// Self-made formula, may be buggy.  Crossfade one side of waveform with the inverse of the other.
 
 					// Taking this calculation out of the following loop will help with performance with high Range values.
-					temp2 = ( currentIndex + int( currentSampLen * ( modify[i] / currentSampLen ) ) ) % currentSampLen;
+					temp2 = ( currentIndex + int( currentSampLen * ( temp7 / currentSampLen ) ) ) % currentSampLen;
 
 					for( int j = loopStart; j < loopEnd; ++j )
 					{
@@ -4805,7 +4973,7 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 				{
 					case 1:// Pulse Width
 					{
-						if( sample_realindex[i][l] / ( ( -modify[i] + sampLen[i] ) / sampLen[i] ) > sampLen[i] )
+						if( sample_realindex[i][l] / ( ( -temp7 + temp6 ) / temp6 ) > temp6 )
 						{
 							mainsample[i][l] = 0;
 						}
@@ -4813,7 +4981,7 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 					}
 					case 14:// Flip
 					{
-						if( sample_realindex[i][l] > modify[i] )
+						if( sample_realindex[i][l] > temp7 )
 						{
 							mainsample[i][l] *= -1;
 						}
@@ -4821,13 +4989,13 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 					}
 					case 15:// Clip
 					{
-						temp1 = modify[i] / ( sampLen[i] - 1 );
+						temp1 = temp7 / ( temp6 - 1 );
 						mainsample[i][l] = qBound( -temp1, mainsample[i][l], temp1 );
 						break;
 					}
 					case 16:// Inverse Clip
 					{
-						temp1 = modify[i] / ( sampLen[i] - 1 );
+						temp1 = temp7 / ( temp6 - 1 );
 						if( mainsample[i][l] > 0 && mainsample[i][l] < temp1 )
 						{
 							mainsample[i][l] = temp1;
@@ -4840,30 +5008,30 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 					}
 					case 17:// Sine
 					{
-						temp1 = modify[i] / ( sampLen[i] - 1 );
+						temp1 = temp7 / ( temp6 - 1 );
 						mainsample[i][l] = sin( mainsample[i][l] * ( D_PI * temp1 * 8 + 1 ) );
 						break;
 					}
 					case 18:// Atan
 					{
-						temp1 = modify[i] / ( sampLen[i] - 1 );
+						temp1 = temp7 / ( temp6 - 1 );
 						mainsample[i][l] = atan( mainsample[i][l] * ( D_PI * temp1 * 8 + 1 ) );
 						break;
 					}
 					case 20:// Sync Half Interpolate
 					{
-						temp1 = sampLen[i] / 2.f;
-						temp2 = sampLen[i] / 4.f;
+						temp1 = temp6 / 2.f;
+						temp2 = temp6 / 4.f;
 						if( sample_realindex[i][l] < temp2 || sample_realindex[i][l] > 3.f * temp2 )
 						{
-							mainsample[i][l] *= ( -abs( sample_realindex[i][l] - temp1 ) + temp1 ) / sampLen[i] * 4.f;
+							mainsample[i][l] *= ( -abs( sample_realindex[i][l] - temp1 ) + temp1 ) / temp6 * 4.f;
 						}
 						break;
 					}
 					case 21:// Sync Interpolate
 					{
-						temp1 = sampLen[i] / 2.f;
-						mainsample[i][l] *= ( -abs( sample_realindex[i][l] - temp1 ) + temp1 ) / sampLen[i] * 2.f;
+						temp1 = temp6 / 2.f;
+						mainsample[i][l] *= ( -abs( sample_realindex[i][l] - temp1 ) + temp1 ) / temp6 * 2.f;
 						break;
 					}
 					default:
@@ -4873,9 +5041,9 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 				sample_realindex[i][l] += sample_step[i][l];
 
 				// check overflow
-				while( sample_realindex[i][l] >= sampLen[i] )
+				while( sample_realindex[i][l] >= temp6 )
 				{
-					sample_realindex[i][l] -= sampLen[i];
+					sample_realindex[i][l] -= temp6;
 					lastMainOscEnvDone[l] = true;
 				}
 
@@ -4903,6 +5071,7 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 			{
 				temp2 = subPhase[i] * subSampLen[i];
 				temp3 = subVol[i] * 0.01f;
+				temp4 = subSampLen[i] * WAVERATIO;
 
 				for( int l = 0; l < subUnisonNum[i]; ++l )
 				{
@@ -4933,16 +5102,16 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 						}
 					}
 
-					sample_step_sub = subSampLen[i] / ( sample_rate / noteFreq );
+					sample_step_sub = temp4 / ( sample_rate / noteFreq );
 
-					subsample[i][l] = temp3 * subs[i][int( sample_subindex[i][l] + temp2 ) % int(subSampLen[i])];
+					subsample[i][l] = temp3 * subs[i][int( realfmod( sample_subindex[i][l] + temp2, temp4 ) )];
 
 					sample_subindex[i][l] += sample_step_sub;
 
 					// move waveform position back if it passed the end of the waveform
-					while ( sample_subindex[i][l] >= subSampLen[i] )
+					while ( sample_subindex[i][l] >= temp4 )
 					{
-						sample_subindex[i][l] -= subSampLen[i];
+						sample_subindex[i][l] -= temp4;
 						lastSubEnvDone[i] = true;
 					}
 
@@ -4996,13 +5165,13 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 				temp2 = subVol[i] * 0.01f;
 				for( int l = 0; l < subUnisonNum[i]; ++l )
 				{
-					noiseSampRand = fastRandf( subSampLen[i] ) - 1;
+					noiseSampRand = fastRandf( subSampLen[l] ) - 1;
 
-					temp1 = ( subs[i][int(noiseSampRand)] * subNoiseDirection[i][l] ) + lastSubVal[i][0];
+					temp1 = ( storedsubs[i][int(noiseSampRand)] * subNoiseDirection[i][l] ) + lastSubVal[i][0];
 					if( temp1 > 1 || temp1 < -1 )
 					{
 						subNoiseDirection[i][l] *= -1;
-						temp1 = ( subs[i][int( noiseSampRand )] * subNoiseDirection[i][l] ) + lastSubVal[i][0];
+						temp1 = ( storedsubs[i][int( noiseSampRand )] * subNoiseDirection[i][l] ) + lastSubVal[i][0];
 					}
 
 					subsample[i][l] = temp1 * temp2;
@@ -5042,9 +5211,9 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 
 			sample_step_sample = ( detuneWithCents( sampleKeytracking[l] ? nph->frequency() : 440.f, sampleDetune[l] ) / 440.f ) * ( 44100.f / sample_rate );
 
-			if( sampleGraphEnabled[l] )
+			if( sampleGraphEnabled[l] && sampleStart[l] < sampleEnd[l] )
 			{
-				progress = fmod( ( sample_sampleindex[l] + ( samplePhase[l] * sampleSize * 0.01f ) ), sampleSize ) / sampleSize * 128.f;
+				progress = realfmod( ( sample_sampleindex[l] + ( samplePhase[l] * sampleSize * 0.01f ) ), sampleSize ) / sampleSize * 128.f;
 				intprogress = int(progress);
 
 				temp1 = fmod( progress, 1 );
@@ -5065,7 +5234,7 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 			}
 			else
 			{
-				temp1 = fmod(( sample_sampleindex[l] + ( samplePhase[l] * sampleSize * 0.01f ) ), sampleSize);
+				temp1 = realfmod(( sample_sampleindex[l] + ( samplePhase[l] * sampleSize * 0.01f ) ), sampleSize);
 				samplesample[l][0] = samples[l][0][temp1];
 				samplesample[l][1] = samples[l][1][temp1];
 			}
@@ -5156,7 +5325,8 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 			lastMainOscVal[i][0] = sampleMainOsc[0];// Store results for modulations
 			lastMainOscVal[i][1] = sampleMainOsc[1];
 
-			if( !lastMainOscEnvDone[i] )
+			// second half of "if" statement makes sure the last envelope value is the last value of the graph (not of the waveform), so the sinc interpolation doesn't ruin things.
+			if( !lastMainOscEnvDone[i] && sample_realindex[i][0] <= sampLen[i] * WAVERATIO - WAVERATIO )
 			{
 				lastMainOscEnvVal[i][0] = lastMainOscVal[i][0];
 				lastMainOscEnvVal[i][1] = lastMainOscVal[i][1];
@@ -5219,7 +5389,8 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 			lastSubVal[i][0] = sampleSubOsc[0];// Store results for modulations
 			lastSubVal[i][1] = sampleSubOsc[1];
 
-			if( !lastSubEnvDone[i] )
+			// second half of "if" statement makes sure the last envelope value is the last value of the graph (not of the waveform), so the sinc interpolation doesn't ruin things.
+			if( !lastSubEnvDone[i] && sample_subindex[i][0] <= subSampLen[i] * WAVERATIO - WAVERATIO )
 			{
 				lastSubEnvVal[i][0] = lastSubVal[i][0];
 				lastSubEnvVal[i][1] = lastSubVal[i][1];
@@ -5256,7 +5427,7 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 	// Refresh all modulated values back to the value of the knob.
 	for( int i = 0; i < modValType.size(); ++i )
 	{
-		refreshValue( modValType[i], modValNum[i], mwc );// Possible CPU problem
+		refreshValue( modValType[i], modValNum[i], mwc );
 	}
 	modValType.clear();
 	modValNum.clear();
@@ -5376,7 +5547,11 @@ inline void mSynth::refreshValue( int which, int num, Microwave * mwc )
 }
 
 
-
+// Handles negative values properly, unlike fmod.
+inline float mSynth::realfmod( float k, float n )// Handles negative values properly, unlike fmod.
+{
+	return ((k = fmod(k,n)) < 0) ? k+n : k;
+}
 
 
 
@@ -5587,6 +5762,26 @@ void MicrowaveKnob::setMatrixLocation( int loc1, int loc2, int loc3 )
 }
 
 
+void MicrowaveKnob::setWhichMacroKnob( int which )
+{
+	this->whichMacroKnob = which;
+
+	disconnect(this, &MicrowaveKnob::setMacroTooltip, 0, 0);
+	disconnect(this, &MicrowaveKnob::chooseMacroColor, 0, 0);
+	disconnect(this, &MicrowaveKnob::refreshMacroColor, 0, 0);
+	disconnect(this, &MicrowaveKnob::setMacroColortoDefault, 0, 0);
+
+	if( which != -1 )
+	{
+		connect( this, &MicrowaveKnob::setMacroTooltip, this, [this, which]() { knobView->setMacroTooltip( this, which ); } );
+		connect( this, &MicrowaveKnob::chooseMacroColor, this, [this, which]() { knobView->chooseMacroColor( this, which ); } );
+		connect( this, &MicrowaveKnob::refreshMacroColor, this, [this, which]() { knobView->refreshMacroColor( this, which ); } );
+		connect( this, &MicrowaveKnob::setMacroColortoDefault, this, [this, which]() { knobView->setMacroColortoDefault( this, which ); } );
+	}
+}
+
+
+
 void MicrowaveKnob::contextMenuEvent( QContextMenuEvent * )
 {
 	// for the case, the user clicked right while pressing left mouse-
@@ -5601,7 +5796,13 @@ void MicrowaveKnob::contextMenuEvent( QContextMenuEvent * )
 	contextMenu.addSeparator();
 	if( this->matrixLocation[0] )
 	{
-		contextMenu.addAction( QPixmap(), tr( "Control this in Matrix" ), this, SIGNAL( sendToMatrixAsOutput() ) );
+		contextMenu.addAction( PLUGIN_NAME::getIconPixmap( "tab4" ), tr( "Control this in Matrix" ), this, SIGNAL( sendToMatrixAsOutput() ) );
+	}
+	if( this->whichMacroKnob != -1 )
+	{
+		contextMenu.addAction( PLUGIN_NAME::getIconPixmap( "tab4" ), tr( "Set Macro Tooltip" ), this, SIGNAL( setMacroTooltip() ) );
+		contextMenu.addAction( embed::getIconPixmap( "colorize" ), tr( "Set Knob Color" ), this, SIGNAL( chooseMacroColor() ) );
+		contextMenu.addAction( embed::getIconPixmap( "colorize" ), tr( "Set Knob Color To Default" ), this, SIGNAL( setMacroColortoDefault() ) );
 	}
 	contextMenu.addSeparator();
 	contextMenu.exec( QCursor::pos() );
@@ -5649,9 +5850,16 @@ void MicrowaveKnob::mouseReleaseEvent( QMouseEvent * _me )
 	Knob::mouseReleaseEvent( _me );
 	updateScroll();
 
-	this->setarcColor( QColor(46,74,80) );
-	this->setlineColor( QColor(102,198,199) );
-	this->setInnerColor( QColor(64,92,97) );
+	if( this->whichMacroKnob == -1 )
+	{
+		this->setarcColor( QColor(46,74,80) );
+		this->setlineColor( QColor(102,198,199) );
+		this->setInnerColor( QColor(64,92,97) );
+	}
+	else
+	{
+		refreshMacroColor();
+	}
 }
 
 
