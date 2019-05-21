@@ -882,7 +882,7 @@ void Microwave::loadSettings( const QDomElement & _this )
 	{
 		if( subEnabled[i]->value() )
 		{
-			srccpy( subs[i], const_cast<float*>( storedsubs[i] ), STOREDSUBWAVELEN );
+			interpolateSubOsc(i);
 		}
 	}
 
@@ -1188,8 +1188,9 @@ void Microwave::filtEnabledChanged( int num )
 //When user drawn on graph, send new values to the correct arrays
 void Microwave::samplesChanged( int _begin, int _end )
 {
-	// For some reason there was a bug here where shift clicking on the graph at the top left made currenttab 0, which I don't think has any conveivable explanation.
-	// So, I use the scroll value instead.
+	// For some reason there was a bug here where shift clicking on the graph at the top left made currenttab 0, which I don't think has any conveivable
+	// explanation considering there's only one place currenttab is ever set, which has nothing to do with the graph.
+	// So, I use the scroll value instead, even though... currenttab is supposed to be matched up with the scroll value at all times... I don't know.  Don't ask.  Just accept it.
 	switch( int( scroll.value() - 1 ) )
 	{
 		case 0:
@@ -1203,12 +1204,20 @@ void Microwave::samplesChanged( int _begin, int _end )
 				storedsubs[subNum.value()-1][i] = graph.samples()[i];
 				for( int j = 0; j < WAVERATIO; ++j )
 				{
-					// Puts low-quality samples into there so one can change the waveform mid-note.  The quality boost will occur at the beginning of the next note.
+					// Puts low-quality samples into there so one can change the waveform mid-note.  The quality boost will occur at another time.
 					// It cannot do the interpolation here because it causes lag.
 					subs[subNum.value()-1][i*WAVERATIO+j] = graph.samples()[i];
 				}
 			}
-			//srccpy( subs[subNum.value()-1], const_cast<float*>( storedsubs[subNum.value()-1] ), STOREDSUBWAVELEN );
+
+			subInterpolated[subNum.value()-1] = false;
+
+			// If the entire graph was changed all at once, we can assume it isn't from the user drawing on the graph,
+			// so we can interpolate the oscillator without worrying about lag.
+			if( _begin == 0 && _end == STOREDSUBWAVELEN - 1 )
+			{
+				interpolateSubOsc(subNum.value()-1);
+			}
 			break;
 		}
 		case 2:
@@ -1309,7 +1318,10 @@ void Microwave::playNote( NotePlayHandle * _n, sampleFrame * _working_buffer )
 		{
 			if( subEnabled[i]->value() )
 			{
-				srccpy( subs[i], const_cast<float*>( storedsubs[i] ), STOREDSUBWAVELEN );
+				if( !subInterpolated[i] )
+				{
+					interpolateSubOsc(i);
+				}
 			}
 		}
 	}
@@ -1407,7 +1419,7 @@ void Microwave::deleteNotePluginData( NotePlayHandle * _n )
 
 
 
-// Creates the Microwave GUI.  Creates all GUI elements.  Connects some events to some functions.  Calls updateScroll() to put all of the GUi elements in their correct positions.
+// Creates the Microwave GUI.  Creates all GUI elements.  Connects some events to some functions.  Calls updateScroll() to put all of the GUI elements in their correct positions.
 MicrowaveView::MicrowaveView( Instrument * _instrument,
 					QWidget * _parent ) :
 	InstrumentView( _instrument, _parent )
@@ -2972,14 +2984,14 @@ void MicrowaveView::normalizeClicked()
 		float highestVolume = 0;
 		for( int j = 0; j < 2048; ++j )
 		{
-			highestVolume = abs(b->waveforms[oscilNum][(i*2048)+j]) > highestVolume ? abs(b->waveforms[oscilNum][(i*2048)+j]) : highestVolume;
+			highestVolume = abs(b->storedwaveforms[oscilNum][(i*2048)+j]) > highestVolume ? abs(b->storedwaveforms[oscilNum][(i*2048)+j]) : highestVolume;
 		}
 		if( highestVolume )
 		{
 			float multiplierThing = 1.f / highestVolume;
 			for( int j = 0; j < 2048; ++j )
 			{
-				b->waveforms[oscilNum][(i*2048)+j] *= multiplierThing;
+				b->storedwaveforms[oscilNum][(i*2048)+j] *= multiplierThing;
 			}
 		}
 	}
@@ -3001,11 +3013,11 @@ void MicrowaveView::desawClicked()
 	float end;
 	for( int j = 0; j < 256; ++j )
 	{
-		start = -b->waveforms[oscilNum][j*2048];
-		end = -b->waveforms[oscilNum][j*2048+2047];
+		start = -b->storedwaveforms[oscilNum][j*2048];
+		end = -b->storedwaveforms[oscilNum][j*2048+2047];
 		for( int i = 0; i < 2048; ++i )
 		{
-			b->waveforms[oscilNum][j*2048+i] += (i/2048.f)*end + ((2048.f-i)/2048.f)*start;
+			b->storedwaveforms[oscilNum][j*2048+i] += (i/2048.f)*end + ((2048.f-i)/2048.f)*start;
 		}
 	}
 

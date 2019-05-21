@@ -327,6 +327,12 @@ public:
 
 	void switchMatrixSections( int source, int destination );
 
+	inline void interpolateSubOsc( int which )
+	{
+		srccpy( subs[which], const_cast<float*>( storedsubs[which] ), STOREDSUBWAVELEN );
+		subInterpolated[which] = true;
+	}
+
 protected slots:
 	void valueChanged( int, int );
 	void morphMaxChanged( int );
@@ -452,6 +458,7 @@ private:
 	int currentTab = 0;
 	float storedsubs[64][STOREDSUBWAVELEN] = {{0}};
 	float subs[64][SUBWAVELEN] = {{0}};
+	bool subInterpolated[64] = {};
 	float sampGraphs[1024] = {0};
 	std::vector<float> samples[8][2];
 
