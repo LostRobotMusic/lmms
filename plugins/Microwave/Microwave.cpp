@@ -112,7 +112,7 @@ Plugin::Descriptor PLUGIN_EXPORT microwave_plugin_descriptor =
 	"Microwave",
 	QT_TRANSLATE_NOOP( "pluginBrowser",
 				"Versatile modular wavetable synthesizer" ),
-	"DouglasDGI",
+	"Lost Robot",
 	0x0100,
 	Plugin::Instrument,
 	new PluginPixmapLoader( "logo" ),
@@ -155,17 +155,15 @@ Plugin::Descriptor PLUGIN_EXPORT microwave_plugin_descriptor =
 
 
 
-// Create Microwave.  Create value models (and set defaults, maximums, minimums, and step sizes).  Connect events to functions.
 Microwave::Microwave( InstrumentTrack * _instrument_track ) :
 	Instrument( _instrument_track, &microwave_plugin_descriptor ),
 	visvol( 100, 0, 1000, 0.01f, this, tr( "Visualizer Volume" ) ),
 	loadChnl( 0, 0, 1, 1, this, tr( "Wavetable Loading Channel" ) ),
-	scroll( 1, 1, 7, 0.0001f, this, tr( "Scroll" ) ),
 	subNum(1, 1, 64, this, tr( "Sub Oscillator Number" ) ),
 	sampNum(1, 1, 8, this, tr( "Sample Number" ) ),
 	mainNum(1, 1, 8, this, tr( "Main Oscillator Number" ) ),
 	oversample( this, tr("Oversampling") ),
-	interpolate( this, tr("Interpolation") ),
+	oversampleMode( this, tr("Interpolation") ),
 	loadMode( this, tr("Wavetable Loading Algorithm") ),
 	graph( -1.0f, 1.0f, 204, this ),
 	visualize( false, this )
@@ -193,6 +191,7 @@ Microwave::Microwave( InstrumentTrack * _instrument_track ) :
 		pan[i] = new FloatModel( 0.f, -100.f, 100.f, 0.0001f, this, tr( "Panning" ) );
 		keytracking[i] = new BoolModel( true, this );
 		tempo[i] = new FloatModel( 0.f, 0.f, 999.f, 1.f, this, tr( "Tempo" ) );
+		interpolate[i] = new BoolModel( true, this );
 		setwavemodel( modifyMode[i] )
 
 		filtInVol[i] = new FloatModel( 100, 0, 200, 0.0001f, this, tr( "Input Volume" ) );
@@ -253,6 +252,7 @@ Microwave::Microwave( InstrumentTrack * _instrument_track ) :
 		subRateLimit[i]->setScaleLogarithmic( true );
 		subUnisonNum[i] = new FloatModel( 1.f, 1.f, 32.f, 1.f, this, tr( "Unison Voice Number" ) );
 		subUnisonDetune[i] = new FloatModel( 0.f, 0.f, 2000.f, 0.0001f, this, tr( "Unison Detune" ) );
+		subInterpolate[i] = new BoolModel( true, this );
 
 		modEnabled[i] = new BoolModel( false, this );
 
@@ -290,7 +290,8 @@ Microwave::Microwave( InstrumentTrack * _instrument_track ) :
 
 	loadmodemodel( loadMode )
 
-	interpolatemodel( interpolate )
+	oversamplemodemodel( oversampleMode )
+	oversampleMode.setValue( 1 );// Sample averaging is default
 
 	for( int i = 0; i < 8; ++i )
 	{
@@ -320,6 +321,7 @@ Microwave::Microwave( InstrumentTrack * _instrument_track ) :
 		connect( unisonModify[i], &FloatModel::dataChanged, this, [this, i]() { valueChanged(17, i); }, Qt::DirectConnection );
 		connect( keytracking[i], &BoolModel::dataChanged, this, [this, i]() { valueChanged(18, i); }, Qt::DirectConnection );
 		connect( tempo[i], &FloatModel::dataChanged, this, [this, i]() { valueChanged(19, i); }, Qt::DirectConnection );
+		connect( interpolate[i], &BoolModel::dataChanged, this, [this, i]() { valueChanged(20, i); }, Qt::DirectConnection );
 
 		connect( sampleEnabled[i], &BoolModel::dataChanged, this, [this, i]() { valueChanged(60, i); }, Qt::DirectConnection );
 		connect( sampleMuted[i], &BoolModel::dataChanged, this, [this, i]() { valueChanged(61, i); }, Qt::DirectConnection );
@@ -350,7 +352,7 @@ Microwave::Microwave( InstrumentTrack * _instrument_track ) :
 		connect( filtMuted[i], &BoolModel::dataChanged, this, [this, i]() { valueChanged(133, i); }, Qt::DirectConnection );
 		connect( filtKeytracking[i], &BoolModel::dataChanged, this, [this, i]() { valueChanged(134, i); }, Qt::DirectConnection );
 
-		for( int j = 1; j <= 19; ++j )
+		for( int j = 1; j <= 20; ++j )
 		{
 			valueChanged(j, i);
 		}
@@ -372,6 +374,8 @@ Microwave::Microwave( InstrumentTrack * _instrument_track ) :
 		connect( filtEnabled[i], &BoolModel::dataChanged, this, [this, i]() { filtEnabledChanged(i); }, Qt::DirectConnection );
 
 		connect( sampLen[i], &FloatModel::dataChanged, this, [this, i]() { sampLenChanged(i); }, Qt::DirectConnection );
+
+		connect( interpolate[i], &BoolModel::dataChanged, this, [this, i]() { interpolateChanged(i); } );
 	}
 
 	for( int i = 0; i < 18; ++i )
@@ -401,6 +405,7 @@ Microwave::Microwave( InstrumentTrack * _instrument_track ) :
 		connect( subRateLimit[i], &FloatModel::dataChanged, this, [this, i]() { valueChanged(41, i); }, Qt::DirectConnection );
 		connect( subUnisonNum[i], &FloatModel::dataChanged, this, [this, i]() { valueChanged(42, i); }, Qt::DirectConnection );
 		connect( subUnisonDetune[i], &FloatModel::dataChanged, this, [this, i]() { valueChanged(43, i); }, Qt::DirectConnection );
+		connect( subInterpolate[i], &BoolModel::dataChanged, this, [this, i]() { valueChanged(44, i); }, Qt::DirectConnection );
 
 		connect( modIn[i], &ComboBoxModel::dataChanged, this, [this, i]() { valueChanged(90, i); }, Qt::DirectConnection );
 		connect( modInNum[i], &ComboBoxModel::dataChanged, this, [this, i]() { valueChanged(91, i); }, Qt::DirectConnection );
@@ -418,7 +423,7 @@ Microwave::Microwave( InstrumentTrack * _instrument_track ) :
 		connect( modType[i], &BoolModel::dataChanged, this, [this, i]() { valueChanged(103, i); }, Qt::DirectConnection );
 		connect( modType2[i], &BoolModel::dataChanged, this, [this, i]() { valueChanged(104, i); }, Qt::DirectConnection );
 
-		for( int j = 30; j <= 43; ++j )
+		for( int j = 30; j <= 44; ++j )
 		{
 			valueChanged(j, i);
 		}
@@ -433,6 +438,8 @@ Microwave::Microwave( InstrumentTrack * _instrument_track ) :
 		connect( subSampLen[i], &FloatModel::dataChanged, this, [this, i]() { subSampLenChanged(i); } );
 
 		connect( subEnabled[i], &BoolModel::dataChanged, this, [this, i]() { subEnabledChanged(i); } );
+
+		connect( subInterpolate[i], &BoolModel::dataChanged, this, [this, i]() { subInterpolateChanged(i); } );
 	}
 
 	for( int i = 0; i < 8; ++i )
@@ -474,7 +481,7 @@ void Microwave::saveSettings( QDomDocument & _doc, QDomElement & _this )
 {
 
 	// Save plugin version
-	_this.setAttribute( "version", "Microwave Testing Release 5.1" );
+	_this.setAttribute( "version", "Microwave Testing Release 5.2" );
 
 	/*
 
@@ -486,7 +493,7 @@ void Microwave::saveSettings( QDomDocument & _doc, QDomElement & _this )
 	- Microwave Testing Release 4.2
 	- Microwave Testing Release 5
 	- Microwave Testing Release 5.1
-
+	- Microwave Testing Release 5.2
 	*/
 
 	visvol.saveSettings( _doc, _this, "visualizervolume" );
@@ -494,6 +501,8 @@ void Microwave::saveSettings( QDomDocument & _doc, QDomElement & _this )
 	loadChnl.saveSettings( _doc, _this, "loadingchannel" );
 
 	oversample.saveSettings( _doc, _this, "oversample" );
+	oversampleMode.saveSettings( _doc, _this, "oversamplemode" );
+	removeDC.saveSettings( _doc, _this, "removeDC" );
 
 	QString saveString;
 
@@ -568,6 +577,7 @@ void Microwave::saveSettings( QDomDocument & _doc, QDomElement & _this )
 			pan[i]->saveSettings( _doc, _this, "pan_"+QString::number(i) );
 			keytracking[i]->saveSettings( _doc, _this, "keytracking_"+QString::number(i) );
 			tempo[i]->saveSettings( _doc, _this, "tempo_"+QString::number(i) );
+			interpolate[i]->saveSettings( _doc, _this, "interpolate_"+QString::number(i) );
 		}
 	}
 
@@ -630,6 +640,7 @@ void Microwave::saveSettings( QDomDocument & _doc, QDomElement & _this )
 			subRateLimit[i]->saveSettings( _doc, _this, "subRateLimit_"+QString::number(i) );
 			subUnisonNum[i]->saveSettings( _doc, _this, "subUnisonNum_"+QString::number(i) );
 			subUnisonDetune[i]->saveSettings( _doc, _this, "subUnisonDetune_"+QString::number(i) );
+			subInterpolate[i]->saveSettings( _doc, _this, "subInterpolate_"+QString::number(i) );
 		}
 	}
 
@@ -675,6 +686,8 @@ void Microwave::loadSettings( const QDomElement & _this )
 	loadChnl.loadSettings( _this, "loadingchannel" );
 
 	oversample.loadSettings( _this, "oversample" );
+	oversampleMode.loadSettings( _this, "oversamplemode" );
+	removeDC.loadSettings( _this, "removeDC" );
 
 	graph.setLength( 2048 );
 
@@ -701,6 +714,7 @@ void Microwave::loadSettings( const QDomElement & _this )
 			pan[i]->loadSettings( _this, "pan_"+QString::number(i) );
 			keytracking[i]->loadSettings( _this, "keytracking_"+QString::number(i) );
 			tempo[i]->loadSettings( _this, "tempo_"+QString::number(i) );
+			interpolate[i]->loadSettings( _this, "interpolate_"+QString::number(i) );
 		}
 
 		filtEnabled[i]->loadSettings( _this, "filtEnabled_"+QString::number(i) );
@@ -762,6 +776,7 @@ void Microwave::loadSettings( const QDomElement & _this )
 			subRateLimit[i]->loadSettings( _this, "subRateLimit_"+QString::number(i) );
 			subUnisonNum[i]->loadSettings( _this, "subUnisonNum_"+QString::number(i) );
 			subUnisonDetune[i]->loadSettings( _this, "subUnisonDetune_"+QString::number(i) );
+			subInterpolate[i]->loadSettings( _this, "subInterpolate_"+QString::number(i) );
 		}
 
 		modEnabled[i]->loadSettings( _this, "modEnabled_"+QString::number(i) );
@@ -882,7 +897,7 @@ void Microwave::loadSettings( const QDomElement & _this )
 	{
 		if( subEnabled[i]->value() )
 		{
-			interpolateSubOsc(i);
+			fillSubOsc(i, subInterpolate[i]->value());
 		}
 	}
 
@@ -890,7 +905,7 @@ void Microwave::loadSettings( const QDomElement & _this )
 	{
 		if( enabled[i]->value() )
 		{
-			srccpy( waveforms[i], const_cast<float*>( storedwaveforms[i] ), STOREDMAINARRAYLEN );
+			fillMainOsc(i, interpolate[i]->value());
 		}
 	}
 
@@ -922,6 +937,7 @@ void Microwave::valueChanged( int which, int num )
 		case 17: unisonModifyArr[num] = unisonModify[num]->value(); break;
 		case 18: keytrackingArr[num] = keytracking[num]->value(); break;
 		case 19: tempoArr[num] = tempo[num]->value(); break;
+		case 20: interpolateArr[num] = interpolate[num]->value(); break;
 
 		case 30: subEnabledArr[num] = subEnabled[num]->value(); break;
 		case 31: subMutedArr[num] = subMuted[num]->value(); break;
@@ -937,6 +953,7 @@ void Microwave::valueChanged( int which, int num )
 		case 41: subRateLimitArr[num] = subRateLimit[num]->value(); break;
 		case 42: subUnisonNumArr[num] = subUnisonNum[num]->value(); break;
 		case 43: subUnisonDetuneArr[num] = subUnisonDetune[num]->value(); break;
+		case 44: subInterpolateArr[num] = subInterpolate[num]->value(); break;
 
 		case 60: sampleEnabledArr[num] = sampleEnabled[num]->value(); break;
 		case 61: sampleMutedArr[num] = sampleMuted[num]->value(); break;
@@ -1031,6 +1048,7 @@ void Microwave::valueChanged( int which, int num )
 				case 41: ps->subRateLimit[num] = subRateLimit[num]->value(); break;
 				case 42: ps->subUnisonNum[num] = subUnisonNum[num]->value(); break;
 				case 43: ps->subUnisonDetune[num] = subUnisonDetune[num]->value(); break;
+				case 44: ps->subInterpolate[num] = subInterpolate[num]->value(); break;
 
 				case 60: ps->sampleEnabled[num] = sampleEnabled[num]->value(); break;
 				case 61: ps->sampleMuted[num] = sampleMuted[num]->value(); break;
@@ -1104,7 +1122,7 @@ void Microwave::sampLenChanged( int i )
 //Change graph length to sample length
 void Microwave::subSampLenChanged( int num )
 {
-	if( scroll.value() == 2 && subNum.value() == num + 1 )
+	if( scroll == 1 && subNum.value() == num + 1 )
 	{
 		graph.setLength( subSampLen[num]->value() );
 	}
@@ -1149,15 +1167,6 @@ void Microwave::modEnabledChanged( int num )
 	}
 }
 
-//NOTE: Different from Microwave::modEnabledChanged.
-//Changes maximum value of the Matrix scroll bar.
-void MicrowaveView::modEnabledChanged()
-{
-	Microwave * b = castModel<Microwave>();
-
-	matrixScrollBar->setRange( 0, qBound( 100.f, b->maxModEnabled * 100.f, 6232.f ) + 30.f );
-}
-
 
 //Stores the highest enabled sample.  Helps with CPU benefit, refer to its use in mSynth::nextStringSample
 void Microwave::sampleEnabledChanged( int num )
@@ -1185,13 +1194,27 @@ void Microwave::filtEnabledChanged( int num )
 }
 
 
+//Updates sub oscillator inteprolation when the interpolation LED is changed.
+void Microwave::interpolateChanged( int num )
+{
+	fillMainOsc( num, interpolate[num]->value() );
+}
+
+
+//Updates sub oscillator inteprolation when the interpolation LED is changed.
+void Microwave::subInterpolateChanged( int num )
+{
+	fillSubOsc( num, subInterpolate[num]->value() );
+}
+
+
 //When user drawn on graph, send new values to the correct arrays
 void Microwave::samplesChanged( int _begin, int _end )
 {
 	// For some reason there was a bug here where shift clicking on the graph at the top left made currenttab 0, which I don't think has any conveivable
 	// explanation considering there's only one place currenttab is ever set, which has nothing to do with the graph.
 	// So, I use the scroll value instead, even though... currenttab is supposed to be matched up with the scroll value at all times... I don't know.  Don't ask.  Just accept it.
-	switch( int( scroll.value() - 1 ) )
+	switch( int( scroll ) )
 	{
 		case 0:
 		{
@@ -1210,13 +1233,13 @@ void Microwave::samplesChanged( int _begin, int _end )
 				}
 			}
 
-			subInterpolated[subNum.value()-1] = false;
+			subFilled[subNum.value()-1] = false;
 
 			// If the entire graph was changed all at once, we can assume it isn't from the user drawing on the graph,
 			// so we can interpolate the oscillator without worrying about lag.
 			if( _begin == 0 && _end == STOREDSUBWAVELEN - 1 )
 			{
-				interpolateSubOsc(subNum.value()-1);
+				fillSubOsc(subNum.value()-1, subInterpolate[subNum.value()-1]->value());
 			}
 			break;
 		}
@@ -1311,16 +1334,16 @@ void Microwave::playNote( NotePlayHandle * _n, sampleFrame * _working_buffer )
 	if ( _n->m_pluginData == NULL || _n->totalFramesPlayed() == 0 )
 	{
 		_n->m_pluginData = new mSynth(
-					_n, phaseRandArr, modifyModeArr, modifyArr, morphArr, rangeArr, unisonVoicesArr, unisonDetuneArr, unisonMorphArr, unisonModifyArr, morphMaxArr, detuneArr, waveforms, subs, subEnabledArr, subVolArr, subRateLimitArr, subPhaseArr, subPhaseRandArr, subDetuneArr, subMutedArr, subKeytrackArr, subSampLenArr, subNoiseArr, sampLenArr, modInArr, modInNumArr, modInAmntArr, modInCurveArr, modIn2Arr, modInNum2Arr, modInAmnt2Arr, modInCurve2Arr, modOutSecArr, modOutSigArr, modOutSecNumArr, modCombineTypeArr, modTypeArr, modType2Arr, phaseArr, volArr, filtInVolArr, filtTypeArr, filtSlopeArr, filtCutoffArr, filtResoArr, filtGainArr, filtSatuArr, filtWetDryArr, filtBalArr, filtOutVolArr, filtEnabledArr, enabledArr, modEnabledArr, sampGraphs, mutedArr, sampleEnabledArr, sampleGraphEnabledArr, sampleMutedArr, sampleKeytrackingArr, sampleLoopArr, sampleVolumeArr, samplePanningArr, sampleDetuneArr, samplePhaseArr, samplePhaseRandArr, samples, filtFeedbackArr, filtDetuneArr, filtKeytrackingArr, subPanningArr, sampleStartArr, sampleEndArr, panArr, subTempoArr, macroArr, filtMutedArr, subUnisonNumArr, subUnisonDetuneArr, keytrackingArr, tempoArr );
+					_n, phaseRandArr, modifyModeArr, modifyArr, morphArr, rangeArr, unisonVoicesArr, unisonDetuneArr, unisonMorphArr, unisonModifyArr, morphMaxArr, detuneArr, waveforms, subs, subEnabledArr, subVolArr, subRateLimitArr, subPhaseArr, subPhaseRandArr, subDetuneArr, subMutedArr, subKeytrackArr, subSampLenArr, subNoiseArr, sampLenArr, modInArr, modInNumArr, modInAmntArr, modInCurveArr, modIn2Arr, modInNum2Arr, modInAmnt2Arr, modInCurve2Arr, modOutSecArr, modOutSigArr, modOutSecNumArr, modCombineTypeArr, modTypeArr, modType2Arr, phaseArr, volArr, filtInVolArr, filtTypeArr, filtSlopeArr, filtCutoffArr, filtResoArr, filtGainArr, filtSatuArr, filtWetDryArr, filtBalArr, filtOutVolArr, filtEnabledArr, enabledArr, modEnabledArr, sampGraphs, mutedArr, sampleEnabledArr, sampleGraphEnabledArr, sampleMutedArr, sampleKeytrackingArr, sampleLoopArr, sampleVolumeArr, samplePanningArr, sampleDetuneArr, samplePhaseArr, samplePhaseRandArr, samples, filtFeedbackArr, filtDetuneArr, filtKeytrackingArr, subPanningArr, sampleStartArr, sampleEndArr, panArr, subTempoArr, macroArr, filtMutedArr, subUnisonNumArr, subUnisonDetuneArr, keytrackingArr, tempoArr, subInterpolateArr, interpolateArr );
 		mwc = dynamic_cast<Microwave *>(_n->instrumentTrack()->instrument());
 
 		for( int i = 0; i < 64; ++i )
 		{
 			if( subEnabled[i]->value() )
 			{
-				if( !subInterpolated[i] )
+				if( !subFilled[i] )
 				{
-					interpolateSubOsc(i);
+					fillSubOsc(i, subInterpolate[i]->value());
 				}
 			}
 		}
@@ -1335,7 +1358,7 @@ void Microwave::playNote( NotePlayHandle * _n, sampleFrame * _working_buffer )
 		sampleFrame outputSample;
 		sampleFrame totalOutputSample = {0, 0};
 
-		switch( interpolate.value() )
+		switch( oversampleMode.value() )
 		{
 			case 0:
 			{
@@ -1373,7 +1396,7 @@ void Microwave::playNote( NotePlayHandle * _n, sampleFrame * _working_buffer )
 		}
 
 		//update visualizer
-		if( visualize.value() && scroll.value() == 1 && ps->enabled[mainNum.value()-1] )
+		if( viewOpen && visualize.value() && scroll == 0 && ps->enabled[mainNum.value()-1] )
 		{
 			visualizerValues[int( ( ps->sample_realindex[mainNum.value()-1][0] / ( ps->sampLen[mainNum.value()-1] * WAVERATIO ) ) * 204.f)] = ps->mainsample[mainNum.value()-1][0] * visvol.value() * 0.01f;
 			if( ps->noteDuration % 1470 == 1 )// Updates around 30 times per second (per note because I'm lazy I guess?)
@@ -1391,6 +1414,49 @@ void Microwave::playNote( NotePlayHandle * _n, sampleFrame * _working_buffer )
 
 void Microwave::deleteNotePluginData( NotePlayHandle * _n )
 {
+}
+
+
+// Fill subs using storedsubs, usually (but not always) making use of libsamplerate for some awesome sinc interpolation.
+inline void Microwave::fillSubOsc( int which, bool doInterpolate )
+{
+	if( doInterpolate )
+	{
+		srccpy( subs[which], const_cast<float*>( storedsubs[which] ), STOREDSUBWAVELEN );
+	}
+	else
+	{
+		for( int i = 0; i < STOREDSUBWAVELEN; ++i )
+		{
+			for( int j = 0; j < WAVERATIO; ++j )
+			{
+				subs[which][i*WAVERATIO+j] = storedsubs[which][i];
+			}
+		}
+	}
+	subFilled[which] = true;
+}
+
+
+
+// Fill subs using storedsubs, usually (but not always) making use of libsamplerate for some awesome sinc interpolation.
+inline void Microwave::fillMainOsc( int which, bool doInterpolate )
+{
+	if( doInterpolate )
+	{
+		srccpy( waveforms[which], const_cast<float*>( storedwaveforms[which] ), STOREDMAINARRAYLEN );
+	}
+	else
+	{
+		for( int i = 0; i < STOREDMAINARRAYLEN; ++i )
+		{
+			for( int j = 0; j < WAVERATIO; ++j )
+			{
+				waveforms[which][i*WAVERATIO+j] = storedwaveforms[which][i];
+			}
+		}
+	}
+	mainFilled[which] = true;
 }
 
 
@@ -1493,6 +1559,9 @@ MicrowaveView::MicrowaveView( Instrument * _instrument,
 	keytrackingToggle = new LedCheckBox( "", this, tr( "Keytracking" ), LedCheckBox::Green );
 	ToolTip::add( keytrackingToggle, tr( "This button turns keytracking on/off.  Without keytracking, the frequency will be 440 Hz by default, and will ignore the frequency of the played note, but will still follow other methods of detuning the sound." ) );
 
+	interpolateToggle = new LedCheckBox( "", this, tr( "Interpolation Enabled" ), LedCheckBox::Green );
+	ToolTip::add( interpolateToggle, tr( "This button turns sinc interpolation on/off.  Interpolation uses no CPU and makes the oscillator super duper high-quality.  You'll probably only ever want to turn this off when you're using small waveform lengths and you don't want the waveform smoothed over." ) );
+
 
 	sampleEnabledToggle = new LedCheckBox( "", this, tr( "Sample Enabled" ), LedCheckBox::Green );
 	ToolTip::add( sampleEnabledToggle, tr( "This button enables the oscillator.  A disabled oscillator will never do anything and does not use any CPU.  In many cases, the settings of a disabled oscillator will not be saved, so be careful!" ) );
@@ -1587,17 +1656,20 @@ MicrowaveView::MicrowaveView( Instrument * _instrument,
 
 	makeknob( subUnisonDetuneKnob, knobColored, tr( "Unison Detune" ), tr( "This knob detunes every unison voice by a random number that is less than the specified amount." ) );
 
-	subEnabledToggle = new LedCheckBox( "", this, tr( "Sub Oscillator Enabled" ), LedCheckBox::Green );
+	subEnabledToggle = new LedCheckBox( "", this, tr( "Enabled" ), LedCheckBox::Green );
 	ToolTip::add( subEnabledToggle, tr( "This button enables the oscillator.  A disabled oscillator will never do anything and does not use any CPU.  In many cases, the settings of a disabled oscillator will not be saved, so be careful!" ) );
 
-	subMutedToggle = new LedCheckBox( "", this, tr( "Sub Oscillator Muted" ), LedCheckBox::Green );
+	subMutedToggle = new LedCheckBox( "", this, tr( "Muted" ), LedCheckBox::Green );
 	ToolTip::add( subMutedToggle, tr( "This button mutes the oscillator.  An enabled but muted oscillator will still use CPU and still work as a matrix input, but will not be sent to the audio output." ) );
 
-	subKeytrackToggle = new LedCheckBox( "", this, tr( "Sub Oscillator Keytracking Enabled" ), LedCheckBox::Green );
+	subKeytrackToggle = new LedCheckBox( "", this, tr( "Keytracking Enabled" ), LedCheckBox::Green );
 	ToolTip::add( subKeytrackToggle, tr( "This button turns keytracking on/off.  Without keytracking, the frequency will be 440 Hz by default, and will ignore the frequency of the played note, but will still follow other methods of detuning the sound." ) );
 
-	subNoiseToggle = new LedCheckBox( "", this, tr( "Sub Oscillator Noise Enabled" ), LedCheckBox::Green );
+	subNoiseToggle = new LedCheckBox( "", this, tr( "Noise Enabled" ), LedCheckBox::Green );
 	ToolTip::add( subNoiseToggle, tr( "This button converts this oscillator into a noise generator.  A random part of the graph is chosen, that value is added to the previous output in the same direction it was going, and when the waveform crosses the top or bottom, the direction changes." ) );
+
+	subInterpolateToggle = new LedCheckBox( "", this, tr( "Interpolation Enabled" ), LedCheckBox::Green );
+	ToolTip::add( subInterpolateToggle, tr( "This button turns sinc interpolation on/off.  Interpolation uses no CPU and makes the oscillator super duper high-quality.  You'll probably only ever want to turn this off when you're using small waveform lengths and you don't want the waveform smoothed over." ) );
 
 	for( int i = 0; i < 8; ++i )
 	{
@@ -1702,27 +1774,27 @@ MicrowaveView::MicrowaveView( Instrument * _instrument,
 	matrixForegroundLabel->setAttribute( Qt::WA_TransparentForMouseEvents );
 
 	sinWaveBtn = new PixmapButton( this, tr( "Sine" ) );
-	sinWaveBtn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "sinwave" ) );
+	sinWaveBtn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "sinwave_active" ) );
 	sinWaveBtn->setInactiveGraphic( PLUGIN_NAME::getIconPixmap( "sinwave" ) );
 	ToolTip::add( sinWaveBtn, tr( "Sine wave" ) );
 
 	triangleWaveBtn = new PixmapButton( this, tr( "Nachos" ) );
-	triangleWaveBtn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "triwave" ) );
+	triangleWaveBtn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "triwave_active" ) );
 	triangleWaveBtn->setInactiveGraphic( PLUGIN_NAME::getIconPixmap( "triwave" ) );
 	ToolTip::add( triangleWaveBtn, tr( "Nacho wave" ) );
 
 	sawWaveBtn = new PixmapButton( this, tr( "Sawsa" ) );
-	sawWaveBtn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "sawwave" ) );
+	sawWaveBtn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "sawwave_active" ) );
 	sawWaveBtn->setInactiveGraphic( PLUGIN_NAME::getIconPixmap( "sawwave" ) );
 	ToolTip::add( sawWaveBtn, tr( "Sawsa wave" ) );
 
 	sqrWaveBtn = new PixmapButton( this, tr( "Sosig" ) );
-	sqrWaveBtn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "sqrwave" ) );
+	sqrWaveBtn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "sqrwave_active" ) );
 	sqrWaveBtn->setInactiveGraphic( PLUGIN_NAME::getIconPixmap( "sqrwave" ) );
 	ToolTip::add( sqrWaveBtn, tr( "Sosig wave" ) );
 
 	whiteNoiseWaveBtn = new PixmapButton( this, tr( "Metal Fork" ) );
-	whiteNoiseWaveBtn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "noisewave" ) );
+	whiteNoiseWaveBtn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "noisewave_active" ) );
 	whiteNoiseWaveBtn->setInactiveGraphic( PLUGIN_NAME::getIconPixmap( "noisewave" ) );
 	ToolTip::add( whiteNoiseWaveBtn, tr( "Metal Fork" ) );
 
@@ -1732,35 +1804,35 @@ MicrowaveView::MicrowaveView( Instrument * _instrument,
 	ToolTip::add( usrWaveBtn, tr( "Takeout Menu" ) );
 
 	smoothBtn = new PixmapButton( this, tr( "Microwave Cover" ) );
-	smoothBtn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "smoothwave" ) );
+	smoothBtn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "smoothwave_active" ) );
 	smoothBtn->setInactiveGraphic( PLUGIN_NAME::getIconPixmap( "smoothwave" ) );
 	ToolTip::add( smoothBtn, tr( "Microwave Cover" ) );
 
 
 	sinWave2Btn = new PixmapButton( this, tr( "Sine" ) );
-	sinWave2Btn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "sinwave" ) );
+	sinWave2Btn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "sinwave_active" ) );
 	sinWave2Btn->setInactiveGraphic( PLUGIN_NAME::getIconPixmap( "sinwave" ) );
 	ToolTip::add( sinWave2Btn, tr( "Sine wave" ) );
 
 	triangleWave2Btn = new PixmapButton( this, tr( "Nachos" ) );
-	triangleWave2Btn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "triwave" ) );
+	triangleWave2Btn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "triwave_active" ) );
 	triangleWave2Btn->setInactiveGraphic( PLUGIN_NAME::getIconPixmap( "triwave" ) );
 	ToolTip::add( triangleWave2Btn,
 			tr( "Nacho wave" ) );
 
 	sawWave2Btn = new PixmapButton( this, tr( "Sawsa" ) );
-	sawWave2Btn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "sawwave" ) );
+	sawWave2Btn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "sawwave_active" ) );
 	sawWave2Btn->setInactiveGraphic( PLUGIN_NAME::getIconPixmap( "sawwave" ) );
 	ToolTip::add( sawWave2Btn,
 			tr( "Sawsa wave" ) );
 
 	sqrWave2Btn = new PixmapButton( this, tr( "Sosig" ) );
-	sqrWave2Btn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "sqrwave" ) );
+	sqrWave2Btn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "sqrwave_active" ) );
 	sqrWave2Btn->setInactiveGraphic( PLUGIN_NAME::getIconPixmap( "sqrwave" ) );
 	ToolTip::add( sqrWave2Btn, tr( "Sosig wave" ) );
 
 	whiteNoiseWave2Btn = new PixmapButton( this, tr( "Metal Fork" ) );
-	whiteNoiseWave2Btn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "noisewave" ) );
+	whiteNoiseWave2Btn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "noisewave_active" ) );
 	whiteNoiseWave2Btn->setInactiveGraphic( PLUGIN_NAME::getIconPixmap( "noisewave" ) );
 	ToolTip::add( whiteNoiseWave2Btn, tr( "Metal Fork" ) );
 
@@ -1770,7 +1842,7 @@ MicrowaveView::MicrowaveView( Instrument * _instrument,
 	ToolTip::add( usrWave2Btn, tr( "Takeout Menu" ) );
 
 	smooth2Btn = new PixmapButton( this, tr( "Microwave Cover" ) );
-	smooth2Btn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "smoothwave" ) );
+	smooth2Btn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "smoothwave_active" ) );
 	smooth2Btn->setInactiveGraphic( PLUGIN_NAME::getIconPixmap( "smoothwave" ) );
 	ToolTip::add( smooth2Btn, tr( "Microwave Cover" ) );
 
@@ -1831,18 +1903,18 @@ MicrowaveView::MicrowaveView( Instrument * _instrument,
 	ToolTip::add( removeDCBtn, tr( "Remove DC Offset" ) );
 	removeDCBtn->setCheckable(true);
 
-	interpolateBox = new ComboBox( this );
-	interpolateBox->setGeometry( 0, 0, 42, 22 );
-	interpolateBox->setFont( pointSize<8>( interpolateBox->font() ) );
+	oversampleModeBox = new ComboBox( this );
+	oversampleModeBox->setGeometry( 0, 0, 42, 22 );
+	oversampleModeBox->setFont( pointSize<8>( oversampleModeBox->font() ) );
 
 
 	normalizeBtn = new PixmapButton( this, tr( "Normalize Wavetable" ) );
-	normalizeBtn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "normalize_button" ) );
+	normalizeBtn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "normalize_button_active" ) );
 	normalizeBtn->setInactiveGraphic( PLUGIN_NAME::getIconPixmap( "normalize_button" ) );
 	ToolTip::add( normalizeBtn, tr( "Normalize Wavetable" ) );
 
 	desawBtn = new PixmapButton( this, tr( "De-saw Wavetable" ) );
-	desawBtn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "desaw_button" ) );
+	desawBtn->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "desaw_button_active" ) );
 	desawBtn->setInactiveGraphic( PLUGIN_NAME::getIconPixmap( "desaw_button" ) );
 	ToolTip::add( desawBtn, tr( "De-saw Wavetable" ) );
 
@@ -1892,9 +1964,6 @@ MicrowaveView::MicrowaveView( Instrument * _instrument,
 	openSampleButton->setCursor( QCursor( Qt::PointingHandCursor ) );
 	openSampleButton->setActiveGraphic( PLUGIN_NAME::getIconPixmap( "fileload" ) );
 	openSampleButton->setInactiveGraphic( PLUGIN_NAME::getIconPixmap( "fileload" ) );
-
-	makeknob( scrollKnob, knobSmallColored, tr( "Scroll" ), tr( "If you can see this, something went terribly wrong." ) );
-	scrollKnob->hide();
 
 	effectScrollBar = new QScrollBar( Qt::Vertical, this );
 	effectScrollBar->setSingleStep( 1 );
@@ -1957,17 +2026,17 @@ MicrowaveView::MicrowaveView( Instrument * _instrument,
 
 
 	// This is a mess, but for some reason just entering a number without a variable didn't work...
-	int ii = 1;
+	int ii = 0;
 	connect( tab1Btn, &PixmapButton::clicked, this, [this, ii]() { tabBtnClicked(ii); } );
-	ii = 2;
+	ii = 1;
 	connect( tab2Btn, &PixmapButton::clicked, this, [this, ii]() { tabBtnClicked(ii); } );
-	ii = 3;
+	ii = 2;
 	connect( tab3Btn, &PixmapButton::clicked, this, [this, ii]() { tabBtnClicked(ii); } );
-	ii = 4;
+	ii = 3;
 	connect( tab4Btn, &PixmapButton::clicked, this, [this, ii]() { tabBtnClicked(ii); } );
-	ii = 5;
+	ii = 4;
 	connect( tab5Btn, &PixmapButton::clicked, this, [this, ii]() { tabBtnClicked(ii); } );
-	ii = 6;
+	ii = 5;
 	connect( tab6Btn, &PixmapButton::clicked, this, [this, ii]() { tabBtnClicked(ii); } );
 
 
@@ -1979,8 +2048,6 @@ MicrowaveView::MicrowaveView( Instrument * _instrument,
 	connect( visualizeToggle, SIGNAL( toggled( bool ) ), this, SLOT ( visualizeToggled( bool ) ) );
 
 
-
-	connect( &b->scroll, SIGNAL( dataChanged( ) ), this, SLOT( updateScroll( ) ) );
 
 	connect( &b->mainNum, SIGNAL( dataChanged( ) ), this, SLOT( mainNumChanged( ) ) );
 
@@ -2018,6 +2085,8 @@ MicrowaveView::MicrowaveView( Instrument * _instrument,
 		macroKnob[i]->refreshMacroColor();
 	}
 
+	b->viewOpen = true;
+
 	updateScroll();
 	updateBackground();
 
@@ -2028,7 +2097,7 @@ MicrowaveView::MicrowaveView( Instrument * _instrument,
 MicrowaveView::~MicrowaveView()
 {
 	Microwave * b = castModel<Microwave>();
-	if( b ) { b->visualize.setValue( false ); }
+	if( b ) { b->viewOpen = false; }
 }
 
 
@@ -2043,14 +2112,13 @@ void MicrowaveView::modelChanged()
 	subNumBox->setModel( &b->subNum );
 	sampNumBox->setModel( &b->sampNum );
 	loadChnlKnob->setModel( &b->loadChnl );
-	scrollKnob->setModel( &b->scroll );
 	mainNumBox->setModel( &b->mainNum );
 	oversampleBox->setModel( &b->oversample );
 	loadModeBox->setModel( &b->loadMode );
 	mainFlipBtn->setModel( &b->mainFlipped );
 	subFlipBtn->setModel( &b->subFlipped );
 	removeDCBtn->setModel( &b->removeDC );
-	interpolateBox->setModel( &b->interpolate );
+	oversampleModeBox->setModel( &b->oversampleMode );
 }
 
 
@@ -2059,7 +2127,7 @@ void MicrowaveView::updateScroll()
 {
 	Microwave * b = castModel<Microwave>();
 
-	int scrollVal = ( b->scroll.value() - 1 ) * 250.f;
+	int scrollVal = ( b->scroll ) * 250.f;
 	int modScrollVal = ( matrixScrollBar->value() ) / 100.f * 115.f;
 	int effectScrollVal = ( effectScrollBar->value() ) / 100.f * 92.f;
 	int mainFlipped = b->mainFlipped.value();
@@ -2078,17 +2146,18 @@ void MicrowaveView::updateScroll()
 	modifyModeBox->move( 127 - scrollVal, 186 + mainIsFlipped );
 	unisonVoicesKnob->move( 184 - scrollVal, 172 );
 	unisonDetuneKnob->move( 209 - scrollVal, 172 );
-	unisonMorphKnob->move( 184 - scrollVal, 203 );
-	unisonModifyKnob->move( 209 - scrollVal, 203 );
+	unisonMorphKnob->move( 184 - scrollVal, 203 + mainIsFlipped );
+	unisonModifyKnob->move( 209 - scrollVal, 203 + mainIsFlipped );
 	detuneKnob->move( 152 - scrollVal, 216 + mainIsFlipped );
-	phaseKnob->move( 86 - scrollVal, 216 + mainIsNotFlipped );
-	phaseRandKnob->move( 113 - scrollVal, 216 + mainIsNotFlipped );
+	phaseKnob->move( 184 - scrollVal, 203 + mainIsNotFlipped );
+	phaseRandKnob->move( 209 - scrollVal, 203 + mainIsNotFlipped );
 	volKnob->move( 23 - scrollVal, 172 + mainIsNotFlipped );
-	enabledToggle->move( 111 - scrollVal, 214 + mainIsFlipped );
-	mutedToggle->move( 97 - scrollVal, 229 + mainIsFlipped );
+	enabledToggle->move( 86 - scrollVal, 229 + mainIsFlipped );
+	mutedToggle->move( 103 - scrollVal, 229 + mainIsFlipped );
 	panKnob->move( 55 - scrollVal, 172 + mainIsNotFlipped );
-	keytrackingToggle->move( 129 - scrollVal, 229 + mainIsFlipped );
+	keytrackingToggle->move( 121 - scrollVal, 229 + mainIsFlipped );
 	tempoKnob->move( 152 - scrollVal, 216 + mainIsNotFlipped );
+	interpolateToggle->move( 121 - scrollVal, 229 + mainIsNotFlipped );
 
 
 	sampleEnabledToggle->move( 86 + 500 - scrollVal, 229 );
@@ -2125,19 +2194,32 @@ void MicrowaveView::updateScroll()
 	}
 
 	subVolKnob->move( 23 + 250 - scrollVal, 172 + subIsFlipped );
-	subEnabledToggle->move( 108 + 250 - scrollVal, 214 + subIsFlipped );
 	subPhaseKnob->move( 180 + 250 - scrollVal, 172 );
 	subPhaseRandKnob->move( 206 + 250 - scrollVal, 172 );
 	subDetuneKnob->move( 95 + 250 - scrollVal, 172 + subIsFlipped );
-	subMutedToggle->move( 147 + 250 - scrollVal, 214 + subIsFlipped );
-	subKeytrackToggle->move( 108 + 250 - scrollVal, 229 );
 	subSampLenKnob->move( 130 + 250 - scrollVal, 172 + subIsFlipped );
-	subNoiseToggle->move( 147 + 250 - scrollVal, 229 );
 	subPanningKnob->move( 55 + 250 - scrollVal, 172 + subIsFlipped );
 	subTempoKnob->move( 23 + 250 - scrollVal, 172 + subIsNotFlipped );
 	subRateLimitKnob->move( 55 + 250 - scrollVal, 172 + subIsNotFlipped );
 	subUnisonNumKnob->move( 95 + 250 - scrollVal, 172 + subIsNotFlipped );
 	subUnisonDetuneKnob->move( 130 + 250 - scrollVal, 172 + subIsNotFlipped );
+
+	if( subIsNotFlipped )
+	{
+		subEnabledToggle->move( 86 + 250 - scrollVal, 229 );
+		subMutedToggle->move( 103 + 250 - scrollVal, 229 );
+		subKeytrackToggle->move( 121 + 250 - scrollVal, 229 );
+		subNoiseToggle->move( 138 + 250 - scrollVal, 229 );
+		subInterpolateToggle->move( 155 + 250 - scrollVal, 229 );
+	}
+	else
+	{
+		subEnabledToggle->move( 86 + 250 - scrollVal, 235 );
+		subMutedToggle->move( 103 + 250 - scrollVal, 235 );
+		subKeytrackToggle->move( 121 + 250 - scrollVal, 235 );
+		subNoiseToggle->move( 138 + 250 - scrollVal, 235 );
+		subInterpolateToggle->move( 155 + 250 - scrollVal, 235 );
+	}
 
 	int matrixRemainder = modScrollVal % 460;
 	int matrixDivide = modScrollVal / 460 * 4;
@@ -2254,7 +2336,6 @@ void MicrowaveView::updateScroll()
 
 	visvolKnob->move( 230 - scrollVal, 24 );
 	visvolKnob->setVisible( b->visualize.value() );
-	scrollKnob->move( 0, 220 );
 
 	loadChnlKnob->move( 1500 + 111 - scrollVal, 121 );
 	visualizeToggle->move( 213 - scrollVal, 26 );
@@ -2262,7 +2343,7 @@ void MicrowaveView::updateScroll()
 	sampNumBox->move( 500 + 18 - scrollVal, 219 );
 	mainNumBox->move( 18 - scrollVal, 219 );
 	graph->move( scrollVal >= 500 ? 500 + 23 - scrollVal : 23 , 30 );
-	tabChanged( b->scroll.value() - 1 );
+	tabChanged( b->scroll );
 	openWavetableButton->move( ( scrollVal < 250 ? 54 : 1500 + 115 ) - scrollVal, scrollVal < 250 ? 220 : 24 );
 	openSampleButton->move( 54 + 500 - scrollVal, 220 );
 
@@ -2334,7 +2415,7 @@ void MicrowaveView::updateScroll()
 	desawBtn->move( 39 + 1500 - scrollVal, 224 );
 
 	removeDCBtn->move( 1250 + 68 - scrollVal, 84 );
-	interpolateBox->move( 1250 + 135 - scrollVal, 50 );
+	oversampleModeBox->move( 1250 + 135 - scrollVal, 50 );
 }
 
 
@@ -2345,15 +2426,17 @@ void MicrowaveView::wheelEvent( QWheelEvent * _me )
 
 	if( _me->x() <= 18 && _me->y() >= 48 && _me->y() <= 138 )// If scroll over tab buttons
 	{
-		if( b->scroll.value() != 7 )
+		if( b->scroll != 6 )
 		{
-			if( _me->delta() < 0 && b->scroll.value() != 6 )
+			if( _me->delta() < 0 && b->scroll != 5 )
 			{
-				b->scroll.setValue( b->scroll.value() + 1 );
+				b->scroll += 1;
+				updateScroll();
 			}
-			else if( _me->delta() > 0 )
+			else if( _me->delta() > 0 && b->scroll > 0 )
 			{
-				b->scroll.setValue( b->scroll.value() - 1 );
+				b->scroll -= 1;
+				updateScroll();
 			}
 		}
 	}
@@ -2416,6 +2499,8 @@ void MicrowaveView::mainNumChanged()
 
 	tempoKnob->setModel( b->tempo[mainNumValue] );
 
+	interpolateToggle->setModel( b->interpolate[mainNumValue] );
+
 }
 
 
@@ -2464,6 +2549,8 @@ void MicrowaveView::subNumChanged()
 
 	subUnisonDetuneKnob->setModel( b->subUnisonDetune[subNumValue] );
 	subUnisonDetuneKnob->setMatrixLocation( 2, 8, subNumValue );
+
+	subInterpolateToggle->setModel( b->subInterpolate[subNumValue] );
 
 }
 
@@ -2963,13 +3050,15 @@ void MicrowaveView::flipperClicked()
 
 void MicrowaveView::XBtnClicked()
 {
-	castModel<Microwave>()->scroll.setValue( 0 );
+	castModel<Microwave>()->scroll = 0;
+	updateScroll();
 }
 
 
 void MicrowaveView::MatrixXBtnClicked()
 {
-	castModel<Microwave>()->scroll.setValue( tabWhenSendingToMatrix + 1 );
+	castModel<Microwave>()->scroll = tabWhenSendingToMatrix;
+	updateScroll();
 }
 
 
@@ -3000,7 +3089,7 @@ void MicrowaveView::normalizeClicked()
 
 	b->updateWavetable[oscilNum] = true;
 
-	b->srccpy( b->waveforms[oscilNum], const_cast<float*>( b->storedwaveforms[oscilNum] ), STOREDMAINARRAYLEN );
+	b->fillMainOsc(oscilNum, b->interpolate[oscilNum]->value());
 }
 
 void MicrowaveView::desawClicked()
@@ -3025,7 +3114,7 @@ void MicrowaveView::desawClicked()
 
 	b->updateWavetable[oscilNum] = true;
 
-	b->srccpy( b->waveforms[oscilNum], const_cast<float*>( b->storedwaveforms[oscilNum] ), STOREDMAINARRAYLEN );
+	b->fillMainOsc(oscilNum, b->interpolate[oscilNum]->value());
 }
 
 
@@ -3052,6 +3141,16 @@ void MicrowaveView::modDownClicked( int i )
 }
 
 
+//NOTE: Different from Microwave::modEnabledChanged.
+//Changes maximum value of the Matrix scroll bar.
+void MicrowaveView::modEnabledChanged()
+{
+	Microwave * b = castModel<Microwave>();
+
+	matrixScrollBar->setRange( 0, qBound( 100.f, b->maxModEnabled * 100.f, 6232.f ) + 30.f );
+}
+
+
 void MicrowaveView::i1Clicked( int i )
 {
 	Microwave * b = castModel<Microwave>();
@@ -3063,34 +3162,36 @@ void MicrowaveView::i1Clicked( int i )
 	{
 		case 1:
 		{
-			b->scroll.setValue( 1 );
+			b->scroll = 0;
 			b->mainNum.setValue( b->modInNum[i+matrixDivide]->value() );
 			break;
 		}
 		case 2:
 		{
-			b->scroll.setValue( 2 );
+			b->scroll = 1;
 			b->subNum.setValue( b->modInNum[i+matrixDivide]->value() );
 			break;
 		}
 		case 3:
 		{
-			b->scroll.setValue( 3 );
+			b->scroll = 2;
 			b->sampNum.setValue( b->modInNum[i+matrixDivide]->value() );
 			break;
 		}
 		case 4:
 		{
-			b->scroll.setValue( 5 );
+			b->scroll = 3;
 			effectScrollBar->setValue( ( b->modInNum[i+matrixDivide]->value() - 1 ) * 100.f );
 			break;
 		}
 		case 8:
 		{
-			b->scroll.setValue( 6 );
+			b->scroll = 5;
 			break;
 		}
 	}
+
+	updateScroll();
 }
 
 
@@ -3105,40 +3206,43 @@ void MicrowaveView::i2Clicked( int i )
 	{
 		case 1:
 		{
-			b->scroll.setValue( 1 );
+			b->scroll = 0;
 			b->mainNum.setValue( b->modInNum2[i+matrixDivide]->value() );
 			break;
 		}
 		case 2:
 		{
-			b->scroll.setValue( 2 );
+			b->scroll = 1;
 			b->subNum.setValue( b->modInNum2[i+matrixDivide]->value() );
 			break;
 		}
 		case 3:
 		{
-			b->scroll.setValue( 3 );
+			b->scroll = 2;
 			b->sampNum.setValue( b->modInNum2[i+matrixDivide]->value() );
 			break;
 		}
 		case 4:
 		{
-			b->scroll.setValue( 5 );
+			b->scroll = 3;
 			effectScrollBar->setValue( ( b->modInNum2[i+matrixDivide]->value() - 1 ) * 100.f );
 			break;
 		}
 		case 8:
 		{
-			b->scroll.setValue( 6 );
+			b->scroll = 5;
 			break;
 		}
 	}
+
+	updateScroll();
 }
 
 
 void MicrowaveView::tabBtnClicked( int i )
 {
-	castModel<Microwave>()->scroll.setValue(i);
+	castModel<Microwave>()->scroll = i;
+	updateScroll();
 }
 
 
@@ -3161,7 +3265,8 @@ void MicrowaveView::sendToMatrixAsOutput( int loc1, int loc2, int loc3 )
 
 	MatrixXBtn->show();
 
-	b->scroll.setValue( 4 );
+	b->scroll = 3;
+	updateScroll();
 
 	matrixScrollBar->setValue( 100 * matrixLocation );
 }
@@ -3251,9 +3356,10 @@ void MicrowaveView::openWavetableFileBtnClicked( )
 {
 	Microwave * b = castModel<Microwave>();
 
-	if( b->scroll.value() != 7 )
+	if( b->scroll != 6 )
 	{
-		b->scroll.setValue( 7 );
+		b->scroll = 6;
+		updateScroll();
 	}
 	else
 	{
@@ -3307,7 +3413,84 @@ void MicrowaveView::openWavetableFile( QString fileName )
 		float lengthOfSample = ((filelength/1000.f)*sample_rate);//in samples
 		switch( algorithm )
 		{
-			case 0:// Load sample without changes
+			case 0:// Lock waveform edges to zero crossings
+			{
+				//Clear wavetable
+				for( int i = 0; i < STOREDMAINARRAYLEN; ++i )
+				{
+					b->storedwaveforms[oscilNum][i] = 0;
+				}
+
+				bool above = sampleBuffer->userWaveSample( 1.f/lengthOfSample, channel ) > 0;
+				float currentValue = 0;
+				std::vector<float> zeroCrossings;
+				float previousPoint = 0;
+
+				//Find zero crossings, and store differences between them in a vector.
+				for( int i = 0; i < lengthOfSample; ++i )
+				{
+					currentValue = sampleBuffer->userWaveSample( i / lengthOfSample, channel );
+					if( ( above && currentValue <= 0 ) || ( !above && currentValue > 0 ) )
+					{
+						above = !above;
+						zeroCrossings.push_back( i-previousPoint );
+						previousPoint = i;
+					}
+				}
+
+				std::vector<float> betterZC;
+				float now = 0;
+				float actualnow = 0;
+
+				//Find and list chosen zero crossings
+				for( int i = 0; i < zeroCrossings.size() - 1; ++i )
+				{
+					now += zeroCrossings[i];
+					actualnow += zeroCrossings[i];
+					if( abs( STOREDMAINWAVELEN / 2.f - now ) < abs( STOREDMAINWAVELEN / 2.f - ( now + zeroCrossings[i+1] ) ) )
+					{
+						betterZC.push_back( actualnow );
+						now = 0;
+					}
+				}
+
+				float start;
+				float end;
+
+				float lasti = 0;
+				float lastj = 0;
+
+				bool breakify = false;
+
+				//Take gathered information and cram it into the waveforms.
+				for( int i = 0; i < betterZC.size() - 1; ++i )
+				{
+					start = betterZC[i];
+					end = betterZC[i+1];
+
+					lasti = i;
+
+					for( int j = 0; j < b->sampLen[oscilNum]->value(); ++j )
+					{
+						lastj = j;
+
+						if( j + ( i * b->sampLen[oscilNum]->value()) >= STOREDMAINARRAYLEN )
+						{
+							breakify = true;
+							break;
+						}
+						b->storedwaveforms[oscilNum][j + ( i * (int)b->sampLen[oscilNum]->value() )] = sampleBuffer->userWaveSample( ( ( j / b->sampLen[oscilNum]->value() ) * ( end - start ) + start ) / lengthOfSample, channel );
+					}
+
+					if( breakify ) { break; }
+				}
+
+				b->morphMax[oscilNum]->setValue( lasti + ( lastj / b->sampLen[oscilNum]->value() ) );
+				b->morphMaxChanged( oscilNum );
+
+				break;
+			}
+			case 1:// Load sample without changes
 			{
 				for( int i = 0; i < STOREDMAINARRAYLEN; ++i )
 				{
@@ -3325,7 +3508,7 @@ void MicrowaveView::openWavetableFile( QString fileName )
 				}
 				break;
 			}
-			case 1:// For loading wavetable files
+			case 2:// For loading wavetable files
 			{
 				for( int i = 0; i < STOREDMAINARRAYLEN; ++i )
 				{
@@ -3343,9 +3526,9 @@ void MicrowaveView::openWavetableFile( QString fileName )
 				}
 				break;
 			}
-			case 2:// Autocorrelation
+			case 3:// Autocorrelation
 			{
-				// This uses a method called autocorrelation to detect the pitch.  It can get a few Hz off (especially at higher frequencies), so I also compare it with the zero crossings to see if I can get it even more accurate.
+				// This uses a method called autocorrelation to detect the pitch, maliciously stolen from Instructables.  It can get a few Hz off (especially at higher frequencies), so I also compare it with the zero crossings to see if I can get it even more accurate.
 
 				// Estimate pitch using autocorrelation:
 
@@ -3447,7 +3630,6 @@ void MicrowaveView::openWavetableFile( QString fileName )
 				b->morphMax[oscilNum]->setValue( 254 );
 				b->morphMaxChanged( oscilNum );
 
-
 				break;
 			}
 		}
@@ -3455,7 +3637,7 @@ void MicrowaveView::openWavetableFile( QString fileName )
 
 		b->updateWavetable[oscilNum] = true;
 
-		b->srccpy( b->waveforms[oscilNum], const_cast<float*>( b->storedwaveforms[oscilNum] ), STOREDMAINARRAYLEN );
+		b->fillMainOsc(oscilNum, b->interpolate[oscilNum]->value());
 	}
 
 	sharedObject::unref( sampleBuffer );
@@ -3565,7 +3747,7 @@ void MicrowaveView::dragEnterEvent( QDragEnterEvent * _dee )
 
 
 // Initializes mSynth (when a new note is played).  Clone all of the arrays storing the knob values so they can be changed by modulation.
-mSynth::mSynth( NotePlayHandle * _nph, float * _phaseRandArr, int * _modifyModeArr, float * _modifyArr, float * _morphArr, float * _rangeArr, float * _unisonVoicesArr, float * _unisonDetuneArr, float * _unisonMorphArr, float * _unisonModifyArr, float * _morphMaxArr, float * _detuneArr, float (&waveforms)[8][MAINARRAYLEN], float (&subs)[64][SUBWAVELEN], bool * _subEnabledArr, float * _subVolArr, float * _subRateLimitArr, float * _subPhaseArr, float * _subPhaseRandArr, float * _subDetuneArr, bool * _subMutedArr, bool * _subKeytrackArr, float * _subSampLenArr, bool * _subNoiseArr, float * _sampLenArr, int * _modInArr, int * _modInNumArr, float * _modInAmntArr, float * _modInCurveArr, int * _modIn2Arr, int * _modInNum2Arr, float * _modInAmnt2Arr, float * _modInCurve2Arr, int * _modOutSecArr, int * _modOutSigArr, int * _modOutSecNumArr, int * modCombineTypeArr, bool * modTypeArr, bool * modType2Arr, float * _phaseArr, float * _volArr, float * _filtInVolArr, int * _filtTypeArr, int * _filtSlopeArr, float * _filtCutoffArr, float * _filtResoArr, float * _filtGainArr, float * _filtSatuArr, float * _filtWetDryArr, float * _filtBalArr, float * _filtOutVolArr, bool * _filtEnabledArr, bool * _enabledArr, bool * _modEnabledArr, float * sampGraphs, bool * _mutedArr, bool * _sampleEnabledArr, bool * _sampleGraphEnabledArr, bool * _sampleMutedArr, bool * _sampleKeytrackingArr, bool * _sampleLoopArr, float * _sampleVolumeArr, float * _samplePanningArr, float * _sampleDetuneArr, float * _samplePhaseArr, float * _samplePhaseRandArr, std::vector<float> (&samples)[8][2], float * _filtFeedbackArr, float * _filtDetuneArr, bool * _filtKeytrackingArr, float * _subPanningArr, float * _sampleStartArr, float * _sampleEndArr, float * _panArr, float * _subTempoArr, float * _macroArr, bool * _filtMutedArr, float * _subUnisonNumArr, float * _subUnisonDetuneArr, bool * _keytrackingArr, float * _tempoArr ) :
+mSynth::mSynth( NotePlayHandle * _nph, float * _phaseRandArr, int * _modifyModeArr, float * _modifyArr, float * _morphArr, float * _rangeArr, float * _unisonVoicesArr, float * _unisonDetuneArr, float * _unisonMorphArr, float * _unisonModifyArr, float * _morphMaxArr, float * _detuneArr, float (&waveforms)[8][MAINARRAYLEN], float (&subs)[64][SUBWAVELEN], bool * _subEnabledArr, float * _subVolArr, float * _subRateLimitArr, float * _subPhaseArr, float * _subPhaseRandArr, float * _subDetuneArr, bool * _subMutedArr, bool * _subKeytrackArr, float * _subSampLenArr, bool * _subNoiseArr, float * _sampLenArr, int * _modInArr, int * _modInNumArr, float * _modInAmntArr, float * _modInCurveArr, int * _modIn2Arr, int * _modInNum2Arr, float * _modInAmnt2Arr, float * _modInCurve2Arr, int * _modOutSecArr, int * _modOutSigArr, int * _modOutSecNumArr, int * modCombineTypeArr, bool * modTypeArr, bool * modType2Arr, float * _phaseArr, float * _volArr, float * _filtInVolArr, int * _filtTypeArr, int * _filtSlopeArr, float * _filtCutoffArr, float * _filtResoArr, float * _filtGainArr, float * _filtSatuArr, float * _filtWetDryArr, float * _filtBalArr, float * _filtOutVolArr, bool * _filtEnabledArr, bool * _enabledArr, bool * _modEnabledArr, float * sampGraphs, bool * _mutedArr, bool * _sampleEnabledArr, bool * _sampleGraphEnabledArr, bool * _sampleMutedArr, bool * _sampleKeytrackingArr, bool * _sampleLoopArr, float * _sampleVolumeArr, float * _samplePanningArr, float * _sampleDetuneArr, float * _samplePhaseArr, float * _samplePhaseRandArr, std::vector<float> (&samples)[8][2], float * _filtFeedbackArr, float * _filtDetuneArr, bool * _filtKeytrackingArr, float * _subPanningArr, float * _sampleStartArr, float * _sampleEndArr, float * _panArr, float * _subTempoArr, float * _macroArr, bool * _filtMutedArr, float * _subUnisonNumArr, float * _subUnisonDetuneArr, bool * _keytrackingArr, float * _tempoArr, bool * _subInterpolateArr, bool * _interpolateArr ) :
 	nph( _nph )
 {
 	memcpy( modifyMode, _modifyModeArr, sizeof(int) * 8 );
@@ -3644,6 +3826,8 @@ mSynth::mSynth( NotePlayHandle * _nph, float * _phaseRandArr, int * _modifyModeA
 	memcpy( subUnisonDetune, _subUnisonDetuneArr, sizeof(float) * 64 );
 	memcpy( sampLen, _sampLenArr, sizeof(float) * 8 );
 	memcpy( macro, _macroArr, sizeof(float) * 18 );
+	memcpy( subInterpolate, _subInterpolateArr, sizeof(bool) * 64 );
+	memcpy( interpolate, _interpolateArr, sizeof(bool) * 8 );
 
 	for( int i = 0; i < 8; ++i )
 	{
@@ -3998,7 +4182,11 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 					comboModVal[1] = 0;
 				}
 			}
+
 			comboModValMono = ( comboModVal[0] + comboModVal[1] ) * 0.5f;
+
+			numberToReset = 0;
+
 			switch( modOutSec[l] )
 			{
 				case 0:
@@ -4016,78 +4204,89 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 						case 1:// Send input to Morph
 						{
 							morph[modOutSecNum[l]-1] = qBound( 0.f, morph[modOutSecNum[l]-1] + comboModValMono*morphMaxVal[modOutSecNum[l]-1], morphMaxVal[modOutSecNum[l]-1] );
-							modValType.push_back( 1 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 1;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 2:// Send input to Range
 						{
 							range[modOutSecNum[l]-1] = qMax( 0.f, range[modOutSecNum[l]-1] + comboModValMono * 16.f );
-							modValType.push_back( 2 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 2;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 3:// Send input to Modify
 						{
 							modify[modOutSecNum[l]-1] = qMax( 0.f, modify[modOutSecNum[l]-1] + comboModValMono * 2048.f );
-							modValType.push_back( 3 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 3;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 4:// Send input to Pitch/Detune
 						{
 							detuneVal[modOutSecNum[l]-1] = detuneVal[modOutSecNum[l]-1] + comboModValMono * 4800.f;
-							modValType.push_back( 7 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 7;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 5:// Send input to Phase
 						{
 							phase[modOutSecNum[l]-1] = phase[modOutSecNum[l]-1] + comboModValMono * 8.f;
-							modValType.push_back( 8 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 8;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 6:// Send input to Volume
 						{
 							vol[modOutSecNum[l]-1] = qMax( 0.f, vol[modOutSecNum[l]-1] + comboModValMono * 100.f );
-							modValType.push_back( 5 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 5;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 7:// Send input to Panning
 						{
 							pan[modOutSecNum[l]-1] = qMax( 0.f, pan[modOutSecNum[l]-1] + comboModValMono * 200.f );
-							modValType.push_back( 6 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 6;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 8:// Send input to Unison Voice Number
 						{
 							unisonVoices[modOutSecNum[l]-1] = qMax( 0.f, unisonVoices[modOutSecNum[l]-1] + comboModValMono * 32.f );
-							modValType.push_back( 14 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 14;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 9:// Send input to Unison Detune
 						{
 							unisonDetune[modOutSecNum[l]-1] = qMax( 0.f, unisonDetune[modOutSecNum[l]-1] + comboModValMono * 2000.f );
-							modValType.push_back( 15 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 15;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 10:// Send input to Unison Morph
 						{
 							unisonMorph[modOutSecNum[l]-1] = qBound( 0.f, unisonMorph[modOutSecNum[l]-1] + comboModValMono*morphMaxVal[modOutSecNum[l]-1], morphMaxVal[modOutSecNum[l]-1] );
-							modValType.push_back( 16 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 16;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 11:// Send input to Unison Modify
 						{
 							unisonModify[modOutSecNum[l]-1] = qMax( 0.f, unisonModify[modOutSecNum[l]-1] + comboModValMono * 2048.f );
-							modValType.push_back( 17 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 17;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						default:
@@ -4107,57 +4306,65 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 						case 1:// Send input to Pitch/Detune
 						{
 							subDetune[modOutSecNum[l]-1] = subDetune[modOutSecNum[l]-1] + comboModValMono * 4800.f;
-							modValType.push_back( 36 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 36;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 2:// Send input to Phase
 						{
 							subPhase[modOutSecNum[l]-1] = subPhase[modOutSecNum[l]-1] + comboModValMono * 8.f;
-							modValType.push_back( 37 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 37;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 3:// Send input to Volume
 						{
 							subVol[modOutSecNum[l]-1] = qMax( 0.f, subVol[modOutSecNum[l]-1] + comboModValMono * 100.f );
-							modValType.push_back( 34 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 34;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 4:// Send input to Panning
 						{
 							subPanning[modOutSecNum[l]-1] = qMax( 0.f, subPanning[modOutSecNum[l]-1] + comboModValMono * 200.f );
-							modValType.push_back( 35 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 35;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 5:// Send input to Sample Length
 						{
 							subSampLen[modOutSecNum[l]-1] = qMax( 1, int( subSampLen[modOutSecNum[l]-1] + comboModValMono * STOREDSUBWAVELEN ) );
-							modValType.push_back( 39 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 39;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 6:// Send input to Rate Limit
 						{
 							subRateLimit[modOutSecNum[l]-1] = qMax( 0.f, subRateLimit[modOutSecNum[l]-1] + comboModValMono * 2.f );
-							modValType.push_back( 41 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 41;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 7:// Send input to Unison Voice Number
 						{
 							subUnisonNum[modOutSecNum[l]-1] = qMax( 1.f, subUnisonNum[modOutSecNum[l]-1] + comboModValMono * 32.f );
-							modValType.push_back( 42 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 42;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 8:// Send input to Unison Detune
 						{
 							subUnisonDetune[modOutSecNum[l]-1] = qMax( 0.f, subUnisonDetune[modOutSecNum[l]-1] + comboModValMono * 2000.f );
-							modValType.push_back( 43 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 43;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						default:
@@ -4177,29 +4384,33 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 						case 1:// Send input to Pitch/Detune
 						{
 							sampleDetune[modOutSecNum[l]-1] = sampleDetune[modOutSecNum[l]-1] + comboModValMono * 4800.f;
-							modValType.push_back( 67 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 67;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 2:// Send input to Phase
 						{
 							samplePhase[modOutSecNum[l]-1] = samplePhase[modOutSecNum[l]-1] + comboModValMono * 8.f;
-							modValType.push_back( 68 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 68;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 3:// Send input to Volume
 						{
 							sampleVolume[modOutSecNum[l]-1] = qMax( 0.f, sampleVolume[modOutSecNum[l]-1] + comboModValMono * 100.f );
-							modValType.push_back( 65 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 65;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 4:// Send input to Panning
 						{
 							samplePanning[modOutSecNum[l]-1] = qBound( -100.f, samplePanning[modOutSecNum[l]-1] + comboModValMono * 100.f, 100.f );
-							modValType.push_back( 66 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 66;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						default:
@@ -4219,78 +4430,89 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 						case 1:// Mod In Amount
 						{
 							modInAmnt[modOutSecNum[l]-1] = modInAmnt[modOutSecNum[l]-1] + comboModValMono*100.f;
-							modValType.push_back( 92 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 92;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 2:// Mod In Curve
 						{
 							modInCurve[modOutSecNum[l]-1] = qMax( 0.f, modInCurve[modOutSecNum[l]-1] + comboModValMono*100.f );
-							modValType.push_back( 93 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 93;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 3:// Secondary Mod In Amount
 						{
 							modInAmnt2[modOutSecNum[l]-1] = modInAmnt2[modOutSecNum[l]-1] + comboModValMono*100.f;
-							modValType.push_back( 95 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 95;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 4:// Secondary Mod In Curve
 						{
 							modInCurve2[modOutSecNum[l]-1] = qMax( 0.f, modInCurve2[modOutSecNum[l]-1] + comboModValMono*100.f );
-							modValType.push_back( 96 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 96;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 5:// Mod In
 						{
 							modIn[modOutSecNum[l]-1] = qMax( 0.f, modIn[modOutSecNum[l]-1] + comboModValMono*100.f );
-							modValType.push_back( 90 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 90;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 6:// Mod In Num
 						{
 							modInNum[modOutSecNum[l]-1] = qMax( 0.f, modInNum[modOutSecNum[l]-1] + comboModValMono*100.f );
-							modValType.push_back( 91 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 91;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 7:// Secondary Mod In
 						{
 							modIn2[modOutSecNum[l]-1] = qMax( 0.f, modIn2[modOutSecNum[l]-1] + comboModValMono*100.f );
-							modValType.push_back( 94 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 94;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 8:// Secondary Mod In Num
 						{
 							modInNum2[modOutSecNum[l]-1] = qMax( 0.f, modInNum2[modOutSecNum[l]-1] + comboModValMono*100.f );
-							modValType.push_back( 95 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 95;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 9:// Mod Out Sec
 						{
 							modOutSec[modOutSecNum[l]-1] = qMax( 0.f, modOutSec[modOutSecNum[l]-1] + comboModValMono*100.f );
-							modValType.push_back( 98 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 98;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 10:// Mod Out Sig
 						{
 							modOutSig[modOutSecNum[l]-1] = qMax( 0.f, modOutSig[modOutSecNum[l]-1] + comboModValMono*100.f );
-							modValType.push_back( 99 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 99;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 11:// Mod Out Sec Num
 						{
 							modOutSecNum[modOutSecNum[l]-1] = qMax( 0.f, modOutSecNum[modOutSecNum[l]-1] + comboModValMono*100.f );
-							modValType.push_back( 100 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 100;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 					}
@@ -4313,85 +4535,97 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 						case 1:// Cutoff Frequency
 						{
 							filtCutoff[modOutSecNum[l]-1] = qBound( 20.f, filtCutoff[modOutSecNum[l]-1] + comboModValMono*19980.f, 21999.f );
-							modValType.push_back( 120 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 120;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 2:// Resonance
 						{
 							filtReso[modOutSecNum[l]-1] = qMax( 0.0001f, filtReso[modOutSecNum[l]-1] + comboModValMono*16.f );
-							modValType.push_back( 121 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 121;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 3:// dbGain
 						{
 							filtGain[modOutSecNum[l]-1] = filtGain[modOutSecNum[l]-1] + comboModValMono*64.f;
-							modValType.push_back( 122 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 122;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 4:// Filter Type
 						{
 							filtType[modOutSecNum[l]-1] = qMax( 0, int(filtType[modOutSecNum[l]-1] + comboModValMono*7.f ) );
-							modValType.push_back( 123 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 123;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 5:// Filter Slope
 						{
 							filtSlope[modOutSecNum[l]-1] = qMax( 0, int(filtSlope[modOutSecNum[l]-1] + comboModValMono*8.f ) );
-							modValType.push_back( 124 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 124;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 6:// Input Volume
 						{
 							filtInVol[modOutSecNum[l]-1] = qMax( 0.f, filtInVol[modOutSecNum[l]-1] + comboModValMono*100.f );
-							modValType.push_back( 125 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 125;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 7:// Output Volume
 						{
 							filtOutVol[modOutSecNum[l]-1] = qMax( 0.f, filtOutVol[modOutSecNum[l]-1] + comboModValMono*100.f );
-							modValType.push_back( 126 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 126;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 8:// Wet/Dry
 						{
 							filtWetDry[modOutSecNum[l]-1] = qBound( 0.f, filtWetDry[modOutSecNum[l]-1] + comboModValMono*100.f, 100.f );
-							modValType.push_back( 127 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 127;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 9:// Balance/Panning
 						{
 							filtBal[modOutSecNum[l]-1] = qBound( -100.f, filtBal[modOutSecNum[l]-1] + comboModValMono*200.f, 100.f );
-							modValType.push_back( 128 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 128;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 10:// Saturation
 						{
 							filtSatu[modOutSecNum[l]-1] = qMax( 0.f, filtSatu[modOutSecNum[l]-1] + comboModValMono*100.f );
-							modValType.push_back( 129 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 129;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 11:// Feedback
 						{
 							filtFeedback[modOutSecNum[l]-1] = qMax( 0.f, filtFeedback[modOutSecNum[l]-1] + comboModValMono*100.f );
-							modValType.push_back( 130 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 130;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 						case 12:// Detune
 						{
 							filtDetune[modOutSecNum[l]-1] = filtDetune[modOutSecNum[l]-1] + comboModValMono*4800.f;
-							modValType.push_back( 131 );
-							modValNum.push_back( modOutSecNum[l]-1 );
+							modValType[numberToReset] = 131;
+							modValNum[numberToReset] = modOutSecNum[l]-1;
+							++numberToReset;
 							break;
 						}
 					}
@@ -4400,8 +4634,9 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 				case 7:// Macro
 				{
 					macro[modOutSig[l]] = macro[modOutSig[l]] + comboModValMono * 200.f;
-					modValType.push_back( 150 );
-					modValNum.push_back( modOutSig[l] );
+					modValType[numberToReset] = 150;
+					modValNum[numberToReset] = modOutSig[l];
+					++numberToReset;
 					break;
 				}
 				default:
@@ -4517,8 +4752,8 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 						case 3:// Low Shelf
 						{
 							temp1 = cos(w0);
-							alpha = sin(w0) / (2*reso);
 							A = exp10( dbgain / 40 );
+							alpha = sin(w0)/2 * sqrt( (A + 1/A)*(1/reso - 1) + 2 );
 							temp2 = 2*sqrt(A)*alpha;
 							b0 =    A*( (A+1) - (A-1)*temp1 + temp2 );
 							b1 =  2*A*( (A-1) - (A+1)*temp1         );
@@ -4531,8 +4766,8 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 						case 4:// High Shelf
 						{
 							temp1 = cos(w0);
-							alpha = sin(w0) / (2*reso);
 							A = exp10( dbgain / 40 );
+							alpha = sin(w0)/2 * sqrt( (A + 1/A)*(1/reso - 1) + 2 );
 							temp2 = 2*sqrt(A)*alpha;
 							b0 =    A*( (A+1) + (A-1)*temp1 + temp2 );
 							b1 = -2*A*( (A-1) + (A+1)*temp1         );
@@ -5338,7 +5573,7 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 			lastMainOscVal[i][1] = sampleMainOsc[1];
 
 			// second half of "if" statement makes sure the last envelope value is the last value of the graph (not of the waveform), so the sinc interpolation doesn't ruin things.
-			if( !lastMainOscEnvDone[i] && sample_realindex[i][0] <= sampLen[i] * WAVERATIO - WAVERATIO )
+			if( !lastMainOscEnvDone[i] && sample_realindex[i][0] <= sampLen[i] * WAVERATIO - ( WAVERATIO * 2 ) )
 			{
 				lastMainOscEnvVal[i][0] = lastMainOscVal[i][0];
 				lastMainOscEnvVal[i][1] = lastMainOscVal[i][1];
@@ -5402,7 +5637,7 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 			lastSubVal[i][1] = sampleSubOsc[1];
 
 			// second half of "if" statement makes sure the last envelope value is the last value of the graph (not of the waveform), so the sinc interpolation doesn't ruin things.
-			if( !lastSubEnvDone[i] && sample_subindex[i][0] <= subSampLen[i] * WAVERATIO - WAVERATIO )
+			if( !lastSubEnvDone[i] && sample_subindex[i][0] <= subSampLen[i] * WAVERATIO - ( WAVERATIO * 2 ) )
 			{
 				lastSubEnvVal[i][0] = lastSubVal[i][0];
 				lastSubEnvVal[i][1] = lastSubVal[i][1];
@@ -5437,12 +5672,11 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 	}
 
 	// Refresh all modulated values back to the value of the knob.
-	for( int i = 0; i < modValType.size(); ++i )
+	for( int i = 0; i < numberToReset; ++i )
 	{
 		refreshValue( modValType[i], modValNum[i], mwc );
 	}
-	modValType.clear();
-	modValNum.clear();
+	numberToReset = 0;
 
 	if( removeDC )
 	{
@@ -5493,6 +5727,7 @@ inline void mSynth::refreshValue( int which, int num, Microwave * mwc )
 		case 17: unisonModify[num] = mwc->unisonModify[num]->value(); break;
 		case 18: keytracking[num] = mwc->keytracking[num]->value(); break;
 		case 19: tempo[num] = mwc->tempo[num]->value(); break;
+		case 20: interpolate[num] = mwc->interpolate[num]->value(); break;
 
 		case 30: subEnabled[num] = mwc->subEnabled[num]->value(); break;
 		case 31: subMuted[num] = mwc->subMuted[num]->value(); break;
@@ -5508,6 +5743,7 @@ inline void mSynth::refreshValue( int which, int num, Microwave * mwc )
 		case 41: subRateLimit[num] = mwc->subRateLimit[num]->value(); break;
 		case 42: subUnisonNum[num] = mwc->subUnisonNum[num]->value(); break;
 		case 43: subUnisonDetune[num] = mwc->subUnisonDetune[num]->value(); break;
+		case 44: subInterpolate[num] = mwc->subInterpolate[num]->value(); break;
 
 		case 60: sampleEnabled[num] = mwc->sampleEnabled[num]->value(); break;
 		case 61: sampleMuted[num] = mwc->sampleMuted[num]->value(); break;
