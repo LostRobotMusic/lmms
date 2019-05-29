@@ -3886,6 +3886,7 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 
 	++noteDuration;
 
+	numberToReset = 0;
 	for( int l = 0; l < maxModEnabled; ++l )// maxModEnabled keeps this from looping 64 times every sample, saving a lot of CPU
 	{
 		if( modEnabled[l] )
@@ -4184,8 +4185,6 @@ void mSynth::nextStringSample( sampleFrame &outputSample, float (&waveforms)[8][
 			}
 
 			comboModValMono = ( comboModVal[0] + comboModVal[1] ) * 0.5f;
-
-			numberToReset = 0;
 
 			switch( modOutSec[l] )
 			{
