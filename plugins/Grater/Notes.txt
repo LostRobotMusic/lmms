@@ -1,0 +1,5 @@
+Time length of life
+Position (not start position)
+Speed through sample
+Attack/Release (same knob)
+Increase number of voices

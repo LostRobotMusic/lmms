@@ -69,6 +69,7 @@ IF("${PLUGIN_LIST}" STREQUAL "")
 		patman
 		peak_controller_effect
 		GigPlayer
+		Grater
 		ReverbSC
 		sf2_player
 		sfxr

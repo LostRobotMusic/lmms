@@ -4577,6 +4577,7 @@ void mSynth::nextStringSample(sampleFrame &outputSample, float (&m_waveforms)[8]
 			{
 				m_temp1 = round(sample_rate / detuneWithCents(440.f, m_filtDetune[l]));
 			}
+
 			if (m_filtDelayBuf[l][0].size() < m_temp1)
 			{
 				m_filtDelayBuf[l][0].resize(m_temp1);
