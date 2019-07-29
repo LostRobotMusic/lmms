@@ -57,10 +57,10 @@ class gSynth
 {
 	MM_OPERATORS
 public:
-	gSynth( NotePlayHandle * _nph, const sample_rate_t _sample_rate, float grain, float position, std::vector<float> (&soundSample)[2], float spray, float fmAmount, float fmFreq, float pmAmount, float pmFreq, float ramp, float pitchRand, float stereoGrain, float voiceNum, float posDist );
+	gSynth( NotePlayHandle * _nph, const sample_rate_t _sample_rate, float grain, float position, std::vector<float> (&soundSample)[2], float spray, float fmAmount, float fmFreq, float pmAmount, float pmFreq, float ramp, float pitchRand, float stereoGrain, float voiceNum, float posDist, float volRand, float amAmount, float amFreq );
 	virtual ~gSynth();
 	
-	void nextStringSample( sampleFrame &outputSample, float grain, float position, std::vector<float> (&soundSample)[2], float speed, bool speedEnabled, float spray, float fmAmount, float fmFreq, float pmAmount, float pmFreq, float ramp, float pitchRand, float stereoGrain, float voiceNum, float posDist );
+	void nextStringSample( sampleFrame &outputSample, float grain, float position, std::vector<float> (&soundSample)[2], float speed, bool speedEnabled, float spray, float fmAmount, float fmFreq, float pmAmount, float pmFreq, float ramp, float pitchRand, float stereoGrain, float voiceNum, float posDist, float volRand, float amAmount, float amFreq );
 
 	gSynthVoice * synthVoices[128][2];
 
@@ -81,10 +81,10 @@ class gSynthVoice
 {
 	MM_OPERATORS
 public:
-	gSynthVoice( NotePlayHandle * _nph, const sample_rate_t _sample_rate, float orig_position, std::vector<float> (&soundSample)[2], float spray, float fmAmount, float fmFreq, float pmAmount, float pmFreq, float ramp, float pitchRand, float stereoGrain, float voiceNum, float posDist );
+	gSynthVoice( NotePlayHandle * _nph, const sample_rate_t _sample_rate, float orig_position, std::vector<float> (&soundSample)[2], float spray, float fmAmount, float fmFreq, float pmAmount, float pmFreq, float ramp, float pitchRand, float stereoGrain, float voiceNum, float posDist, float volRand, float amAmount, float amFreq );
 	virtual ~gSynthVoice();
 	
-	void nextStringSample( float &outputSample, float grain, float orig_position, std::vector<float> (&soundSample)[2], int whichVoice, float speed, bool speedEnabled, float spray, float fmAmount, float fmFreq, float pmAmount, float pmFreq, float ramp, float pitchRand, float stereoGrain, float voiceNum, float posDist );
+	void nextStringSample( float &outputSample, float grain, float orig_position, std::vector<float> (&soundSample)[2], int whichVoice, float speed, bool speedEnabled, float spray, float fmAmount, float fmFreq, float pmAmount, float pmFreq, float ramp, float pitchRand, float stereoGrain, float voiceNum, float posDist, float volRand, float amAmount, float amFreq );
 
 	inline float detuneWithCents( float pitchValue, float detuneValue );
 
@@ -108,11 +108,15 @@ private:
 
 	double fmIndex = 0;
 	double pmIndex = 0;
+	double amIndex = 0;
 
 	double fmDetune;
 	double pmShift;
+	double amChange;
 
 	double sampleRateRatio = 1;
+
+	float randomVolume = 0;
 } ;
 
 
@@ -159,6 +163,9 @@ private:
 	FloatModel stereoGrain;
 	FloatModel voiceNum;
 	FloatModel posDist;
+	FloatModel volRand;
+	FloatModel amAmount;
+	FloatModel amFreq;
 	
 	friend class GraterView;
 } ;
@@ -194,7 +201,10 @@ private:
 	GraterKnob * stereoGrainKnob;
 	GraterKnob * voiceNumKnob;
 	GraterKnob * posDistKnob;
+	GraterKnob * volRandKnob;
 	PixmapButton * usrWaveBtn;
+	GraterKnob * amAmountKnob;
+	GraterKnob * amFreqKnob;
 
 	static QPixmap * s_artwork;
 
