@@ -71,6 +71,7 @@ IF("${PLUGIN_LIST}" STREQUAL "")
 		GigPlayer
 		Grater
 		ReverbSC
+		Sampler
 		sf2_player
 		sfxr
 		sid
