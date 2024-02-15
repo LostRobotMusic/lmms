@@ -343,7 +343,7 @@ void FileBrowser::expandItems(const QList<QString>& expandedDirs, QTreeWidgetIte
 	if (expandedDirs.isEmpty()) { return; }
 
 	int numChildren = item ? item->childCount() : m_fileBrowserTreeWidget->topLevelItemCount();
-	for (int i = 0; i <= numChildren; ++i)
+	for (int i = 0; i < numChildren; ++i)
 	{
 		auto it = item ? item->child(i) : m_fileBrowserTreeWidget->topLevelItem(i);
 		auto d = dynamic_cast<Directory*>(it);
